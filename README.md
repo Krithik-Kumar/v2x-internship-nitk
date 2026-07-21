@@ -6,7 +6,7 @@ A study of Vehicle-to-Everything (V2X) communication and cooperative perception,
 
 - `Intership-report.pdf` - the full internship report (PDF)
 - `Review-paper.pdf` - *From Spoofing to Denial-of-Service: A Curriculum-Integrated Taxonomy of V2X Cybersecurity Threats and Countermeasures* - a review paper written during the internship, surveying the V2X threat landscape and its countermeasures
-- `simulator.html` - an interactive, browser-based simulator comparing the medium-access behaviour of DSRC (IEEE 802.11p CSMA/CA) and C-V2X Mode 4 (sensing-based SPS) under varying vehicle density
+- `v2x-simulator.html` - an interactive, browser-based simulator comparing the medium-access behaviour of DSRC (IEEE 802.11p CSMA/CA) and C-V2X Mode 4 (sensing-based SPS) under varying vehicle density
 
 ## Topics covered
 
@@ -20,7 +20,7 @@ A study of Vehicle-to-Everything (V2X) communication and cooperative perception,
 
 No installation needed - just open `simulator.html` in any modern browser.
 
-Or try it live: 
+Or try it live: https://krithik-kumar.github.io/v2x-internship-nitk/v2x-simulator.html
 
 ## Scope and disclaimer
 
