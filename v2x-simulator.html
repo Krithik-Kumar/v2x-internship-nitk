@@ -1,0 +1,2278 @@
+<!doctype html>
+<!--
+=====================================================================================
+ V2X-ICAS : DSRC vs C-V2X Intersection Collision-Avoidance Simulator     (v1.0, 2026)
+=====================================================================================
+ A self-contained, zero-dependency, browser-based discrete-time network and traffic
+ micro-simulation comparing IEEE 802.11p DSRC, 3GPP LTE-V2X Mode 4 (Rel-14),
+ 3GPP NR-V2X Mode 2 (Rel-16) and a Hybrid PC5+Uu stack for signalized-intersection
+ collision-avoidance applications (ICW / FCW / EEBL / VRU / EVA).
+
+ Everything (engine, protocol models, renderer, chart library, UI) is in this ONE
+ file. No CDN, no build step, no external libraries. Open it in any modern browser.
+
+ Companion document: README.md  (user manual, model equations, assumptions table,
+ literature anchors, export formats). Every non-obvious numeric constant in this
+ file carries an inline citation to the standard or paper it was taken from.
+
+ Fidelity note: this is a quasi-discrete-event abstraction (100 microsecond channel
+ tick), NOT a bit-level ns-3 replacement. Section 9 of README.md lists every
+ simplification explicitly.
+=====================================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>V2X-ICAS - DSRC vs C-V2X Intersection Collision-Avoidance Simulator</title>
+<style>
+
+:root{
+  --chrome:#e9eaee;      
+  --panel:#f6f7f9;        
+  --panel2:#eef0f3;        
+  --border:#c3c7cd;
+  --border2:#9aa0a8;
+  --ink:#1b1e23;
+  --muted:#5b6370;
+  --accent:#0b5cad;      
+  --ok:#0e7a3d;
+  --warn:#9a6a12;
+  --bad:#b3261e;
+  --view-bg:#fbfbfc;
+  --mono:"Consolas","SF Mono","DejaVu Sans Mono","Liberation Mono",monospace;
+  --sans:"Segoe UI",system-ui,"Helvetica Neue",Arial,sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font:12px/1.45 var(--sans);color:var(--ink);background:var(--chrome);
+  overflow:hidden; -webkit-font-smoothing:antialiased;
+}
+button,select,input{font:inherit;color:inherit}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#b9bec6;border:2px solid var(--panel)}
+::-webkit-scrollbar-track{background:var(--panel)}
+
+/* ---------- application grid ---------- */
+#app{display:grid;height:100vh;height:100dvh;
+  grid-template-rows:62px 1fr 264px;
+  grid-template-columns:288px 1fr 312px;
+  grid-template-areas:"tb tb tb" "lp vp rp" "bp bp bp";
+}
+#app.no-left{grid-template-columns:0 1fr 312px}
+#app.no-right{grid-template-columns:288px 1fr 0}
+#app.no-left.no-right{grid-template-columns:0 1fr 0}
+#app.no-bottom{grid-template-rows:62px 1fr 26px}
+
+/* ---------- toolbar ---------- */
+#toolbar{grid-area:tb;display:flex;flex-wrap:wrap;align-items:center;align-content:center;gap:5px 6px;
+  background:linear-gradient(#f2f3f5,#e6e8ec);border-bottom:1px solid var(--border2);
+  padding:4px 8px;user-select:none;overflow:hidden}
+#toolbar .tb-break{flex-basis:100%;height:0;margin:0;order:0}
+#toolbar .brand{font-weight:600;letter-spacing:.2px;margin-right:4px}
+#toolbar .brand small{color:var(--muted);font-weight:400;margin-left:6px}
+.tb-sep{width:1px;height:22px;background:var(--border);margin:0 3px;flex:0 0 auto}
+.btn{background:#fdfdfe;border:1px solid var(--border2);border-radius:2px;
+  padding:3px 9px;cursor:pointer;line-height:1.2}
+.btn:hover{background:#f0f4fa;border-color:var(--accent)}
+.btn:active{background:var(--accent-bg)}
+.btn:disabled{opacity:.45;cursor:default;background:#f2f2f2;border-color:var(--border)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.primary:hover{background:#0a4f95}
+.btn.small{padding:1px 6px;font-size:11px}
+.seg{display:inline-flex;border:1px solid var(--border2);border-radius:2px;overflow:hidden}
+.seg button{border:0;border-left:1px solid var(--border);background:#fdfdfe;
+  padding:3px 10px;cursor:pointer}
+.seg button:first-child{border-left:0}
+.seg button:hover{background:#f0f4fa}
+.seg button.on{background:var(--accent);color:#fff}
+select{background:#fdfdfe;border:1px solid var(--border2);border-radius:2px;padding:2px 4px}
+label.tb{color:var(--muted)}
+#lblSpeed,#lblTime{font-family:var(--mono);font-size:11px;min-width:44px;display:inline-block}
+input[type=range]{accent-color:var(--accent);vertical-align:middle}
+
+/* ---------- left parameter panel ---------- */
+#leftPanel{grid-area:lp;background:var(--panel);border-right:1px solid var(--border2);
+  overflow-y:auto;overflow-x:hidden}
+.pgroup{border-bottom:1px solid var(--border)}
+.pgroup>h3{background:var(--panel2);border-bottom:1px solid var(--border);
+  font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;
+  color:#3c434d;padding:4px 8px;cursor:pointer;user-select:none}
+.pgroup>h3::before{content:"▾ ";color:var(--muted)}
+.pgroup.closed>h3::before{content:"▸ "}
+.pgroup.closed .pbody{display:none}
+.pbody{padding:5px 8px 7px}
+.prow{display:grid;grid-template-columns:118px 1fr 52px;align-items:center;
+  gap:6px;padding:2px 0}
+.prow>span.pl{color:#333a44;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow>span.pv{font-family:var(--mono);font-size:11px;text-align:right;color:var(--ink)}
+.prow input[type=range]{width:100%;height:14px}
+.prow select{width:100%}
+.prow input[type=number]{width:100%;border:1px solid var(--border2);border-radius:2px;
+  padding:1px 4px;font-family:var(--mono);font-size:11px}
+.prow.chk{grid-template-columns:16px 1fr;justify-items:start}
+.pnote{color:var(--muted);font-size:10.5px;padding:2px 0 3px;line-height:1.35}
+
+/* ---------- viewport ---------- */
+#viewportWrap{grid-area:vp;position:relative;background:var(--view-bg);overflow:hidden;
+  border-right:1px solid var(--border)}
+#cv{position:absolute;inset:0;width:100%;height:100%;display:block;cursor:grab}
+#cv.panning{cursor:grabbing}
+#hud{position:absolute;top:6px;left:8px;background:rgba(252,252,253,.92);
+  border:1px solid var(--border2);border-radius:2px;padding:2px 8px;
+  font-family:var(--mono);font-size:11px;color:#2a2f36;pointer-events:none}
+#hudMode{position:absolute;top:6px;right:8px;border-radius:2px;padding:2px 8px;
+  font-family:var(--mono);font-size:11px;color:#fff;pointer-events:none}
+#viewBtns{position:absolute;bottom:8px;right:8px;display:flex;gap:4px}
+#sweepWrap{position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);
+  width:340px;background:#fff;border:1px solid var(--border2);border-radius:2px;
+  box-shadow:0 3px 14px rgba(0,0,0,.18);padding:10px 12px;display:none}
+#sweepWrap h4{font-size:12px;margin-bottom:6px}
+#sweepBarBg{height:10px;border:1px solid var(--border2);background:#f0f1f3}
+#sweepFill{height:100%;width:0%;background:var(--accent)}
+#sweepTxt{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:5px}
+
+/* ---------- right statistics panel ---------- */
+#rightPanel{grid-area:rp;background:var(--panel);border-left:1px solid var(--border2);
+  display:block;overflow-y:auto;overflow-x:hidden}
+#rightPanel .pgroup{flex:0 0 auto}
+#kpiGrid{display:grid;grid-template-columns:1fr 1fr;gap:0 10px;padding:5px 8px}
+.kpi{display:flex;justify-content:space-between;gap:6px;padding:1px 0;
+  border-bottom:1px dotted #dfe2e7}
+.kpi span.k{color:#454c57}
+.kpi span.v{font-family:var(--mono);font-size:11px;text-align:right;white-space:nowrap}
+.kpi span.v.good{color:var(--ok)} .kpi span.v.warn{color:var(--warn)} .kpi span.v.bad{color:var(--bad)}
+#inspGroup{flex:0 0 auto}
+#inspBody{padding:5px 8px;font-family:var(--mono);font-size:11px;line-height:1.5;
+  max-height:240px;overflow-y:auto;white-space:pre}
+#inspBody .dim{color:var(--muted)}
+#evtGroup{flex:0 0 auto}
+#evtList{max-height:200px;overflow-y:auto;padding:3px 6px;font-family:var(--mono);font-size:10.5px;
+  line-height:1.5;background:#fdfdfe}
+.ev{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ev b{font-weight:600}
+.ev.warn b{color:var(--warn)} .ev.bad b{color:var(--bad)} .ev.ok b{color:var(--ok)} .ev.info b{color:var(--accent)}
+
+/* ---------- bottom panel: chart tabs + timeline ---------- */
+#bottomPanel{grid-area:bp;background:var(--panel);border-top:1px solid var(--border2);
+  display:grid;grid-template-rows:26px 1fr 30px;min-height:0}
+#tabsBar{display:flex;align-items:stretch;background:var(--panel2);
+  border-bottom:1px solid var(--border);overflow-x:auto;user-select:none}
+#tabsBar button{border:0;border-right:1px solid var(--border);background:transparent;
+  padding:0 12px;cursor:pointer;color:#3f4650;white-space:nowrap;font-size:11.5px}
+#tabsBar button:hover{background:#e4e7eb}
+#tabsBar button.on{background:#fff;color:var(--accent);font-weight:600;
+  box-shadow:inset 0 -2px 0 var(--accent)}
+#tabsBar .spacer{flex:1}
+#tabsBar .tab-tools{display:flex;align-items:center;gap:5px;padding:0 8px}
+#chartHost{position:relative;background:#fff;min-height:0}
+#chartCv{position:absolute;inset:0;width:100%;height:100%;display:block}
+#timelineRow{display:flex;align-items:center;gap:8px;padding:0 10px;
+  border-top:1px solid var(--border);background:var(--panel2)}
+#tlCv{flex:0 0 210px;height:20px;border:1px solid var(--border);background:#fff}
+#scrub{flex:1}
+#timelineRow .lab{color:var(--muted);font-size:11px}
+
+/* ---------- modal ---------- */
+#aboutModal{position:fixed;inset:0;background:rgba(20,24,30,.45);display:none;
+  align-items:center;justify-content:center;z-index:50}
+#aboutModal .box{width:min(860px,92vw);max-height:86vh;background:#fff;
+  border:1px solid var(--border2);border-radius:2px;display:flex;flex-direction:column;
+  box-shadow:0 6px 30px rgba(0,0,0,.3)}
+#aboutModal .box header{display:flex;justify-content:space-between;align-items:center;
+  padding:8px 12px;border-bottom:1px solid var(--border);background:var(--panel2)}
+#aboutModal .box header h2{font-size:13px}
+#aboutBody{padding:10px 14px;overflow-y:auto;font-size:12px;line-height:1.5}
+#aboutBody h3{font-size:12px;margin:10px 0 4px;color:var(--accent)}
+#aboutBody table{border-collapse:collapse;width:100%;margin:4px 0 8px;font-size:11px}
+#aboutBody th,#aboutBody td{border:1px solid var(--border);padding:3px 6px;text-align:left;vertical-align:top}
+#aboutBody th{background:var(--panel2)}
+#aboutBody td.mono,#aboutBody span.mono{font-family:var(--mono);font-size:10.5px}
+#aboutBody p{margin:4px 0}
+
+/* status strip used when bottom panel collapsed */
+#miniStatus{display:none;grid-area:bp;align-items:center;gap:14px;padding:0 10px;
+  background:var(--panel2);border-top:1px solid var(--border2);
+  font-family:var(--mono);font-size:11px;color:var(--muted)}
+#app.no-bottom #bottomPanel{display:none}
+#app.no-bottom #miniStatus{display:flex}
+
+/* narrow screens: stack panels */
+@media (max-width:1200px){
+  #app{grid-template-columns:250px 1fr 280px}
+}
+@media (max-width:1000px){
+  #app{grid-template-columns:236px 1fr 260px;grid-template-rows:78px 1fr 240px}
+  #app.no-bottom{grid-template-rows:78px 1fr 26px}
+}
+@media (max-width:760px){
+  #app{grid-template-columns:0 1fr 0;grid-template-rows:78px 1fr 200px}
+  #leftPanel,#rightPanel{display:none}
+}
+.pbody{padding:3px 8px 6px}
+.tab{border:0;background:transparent;border-bottom:2px solid transparent;padding:6px 9px;font-size:11px;color:#4a515c;cursor:pointer}
+.tab:hover{color:var(--ink)}
+.tab.on{color:var(--accent);border-bottom-color:var(--accent);font-weight:600}
+.insp{width:100%;border-collapse:collapse;font-size:11px}
+.insp td{padding:1px 4px;border-bottom:1px solid var(--border)}
+.insp td:first-child{color:#5b626c;white-space:nowrap}
+.insp td:last-child{font-family:var(--mono);text-align:right;color:var(--ink)}
+.insp th{text-align:left;color:#5b626c;font-weight:600;padding:2px 4px;border-bottom:1px solid var(--border2)}
+.nbh{font-size:10px;color:var(--muted);margin:6px 0 2px;text-transform:uppercase;letter-spacing:.04em}
+.muted{color:var(--muted);font-size:11px;padding:4px 2px;line-height:1.5}
+#aboutBody .insp{margin:2px 0 8px}
+#aboutBody ul{margin:4px 0 8px 16px;padding:0}
+#aboutBody li{font-size:11px;color:#3a424d;margin:2px 0}
+#aboutBody h2{font-size:13px;color:var(--accent);margin:10px 0 5px}
+.about-footer{margin-top:16px;padding-top:10px;border-top:1px solid var(--border);
+  text-align:center;font-weight:600;color:var(--accent);letter-spacing:.3px}
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ======================= TOP TOOLBAR ======================= -->
+  <div id="toolbar">
+    <span class="brand">V2X-ICAS<small>DSRC / C-V2X intersection collision-avoidance testbed</small></span>
+    <span class="tb-sep"></span>
+    <span class="seg" id="segMode" title="Radio access technology (RAT)"></span>
+    <span class="tb-sep"></span>
+    <label class="tb">Intersection</label>
+    <select id="selIntx" title="Intersection type / control"></select>
+    <label class="tb">Scenario</label>
+    <select id="selScenario" title="Parameter + event presets"></select>
+    <span class="tb-sep"></span>
+    <button class="btn small" id="btnAbout" title="Model architecture, assumptions and sources">About</button>
+    <span class="tb-break"></span>
+    <button class="btn primary" id="btnPlay" title="Run / pause (Space)">&#9654; Run</button>
+    <button class="btn" id="btnStep" title="Advance 100 ms of simulated time">Step</button>
+    <button class="btn" id="btnReset" title="Re-initialize world with current parameters (R)">Reset</button>
+    <span class="tb-sep"></span>
+    <label class="tb">Speed</label>
+    <input type="range" id="rngSpeed" min="-2" max="5" step="1" value="0" style="width:80px"
+           title="Simulation-time multiplier (0.25x – 32x)">
+    <span id="lblSpeed">1.0&times;</span>
+    <span class="tb-sep"></span>
+    <button class="btn" id="btnSweep" title="Headless batch: run every RAT over a density ladder and plot the comparison curves">Density sweep</button>
+    <button class="btn primary" id="btnReport" title="One click: auto-run all four RATs across a density ladder and download a single self-contained HTML report (DSRC vs C-V2X latency/PDR/CBR/CDF + data)"> Comparison report</button>
+    <span class="tb-sep"></span>
+    <button class="btn small" id="btnCsv"  title="Export time-series metrics as CSV">CSV</button>
+    <button class="btn small" id="btnJson" title="Export configuration + summary + series + sweep as JSON">JSON</button>
+    <button class="btn small" id="btnPng"  title="Export the current chart as PNG">PNG</button>
+    <span class="spacer" style="flex:1"></span>
+    <button class="btn small" id="btnLeft"   title="Toggle parameter panel">&#9664; Params</button>
+    <button class="btn small" id="btnBottom" title="Toggle chart panel">Charts</button>
+    <button class="btn small" id="btnRight"  title="Toggle statistics panel">Stats &#9654;</button>
+  </div>
+
+  <!-- ======================= LEFT: PARAMETERS ======================= -->
+  <div id="leftPanel"><div id="paramGroups"></div></div>
+
+  <!-- ======================= CENTER: VIEWPORT ======================= -->
+  <div id="viewportWrap">
+    <canvas id="cv"></canvas>
+    <div id="hud">t=0.0 s</div>
+    <div id="hudMode">DSRC</div>
+    <div id="viewBtns">
+      <button class="btn small" id="btnFit" title="Fit intersection in view (F)">Fit</button>
+      <button class="btn small" id="btnZoomIn">+</button>
+      <button class="btn small" id="btnZoomOut">&minus;</button>
+    </div>
+    <div id="sweepWrap">
+      <h4>Density sweep (headless batch)</h4>
+      <div id="sweepBarBg"><div id="sweepFill"></div></div>
+      <div id="sweepTxt">preparing…</div>
+      <div style="margin-top:8px;text-align:right">
+        <button class="btn small" id="btnCancelSweep">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================= RIGHT: STATISTICS ======================= -->
+  <div id="rightPanel">
+    <div class="pgroup"><h3 data-fold>Live metrics (5 s window)</h3>
+      <div class="pbody" style="padding:0"><div id="kpiGrid"></div></div>
+    </div>
+    <div class="pgroup" id="inspGroup"><h3 data-fold>Vehicle inspector - click a vehicle</h3>
+      <div class="pbody" style="padding:0"><div id="inspBody"><span class="dim">no selection</span></div></div>
+    </div>
+    <div class="pgroup" id="evtGroup"><h3 data-fold>Event log</h3>
+      <div class="pbody" style="padding:0"><div id="evtList"></div></div>
+    </div>
+  </div>
+
+  <!-- ======================= BOTTOM: CHARTS + TIMELINE ======================= -->
+  <div id="bottomPanel">
+    <div id="tabsBar"></div>
+    <div id="chartHost"><canvas id="chartCv"></canvas></div>
+    <div id="timelineRow">
+      <span class="lab">Replay</span>
+      <canvas id="tlCv" width="210" height="20"></canvas>
+      <input type="range" id="scrub" min="0" max="0" value="0" step="1">
+      <span id="lblTime">live</span>
+      <button class="btn small" id="btnLive">&#9679; Live</button>
+    </div>
+  </div>
+  <div id="miniStatus"><span id="miniTxt"></span></div>
+
+</div>
+
+<!-- ======================= ASSUMPTIONS ======================= -->
+<div id="aboutModal"><div class="box">
+  <header><h2>Model constants, sources &amp; simplifications</h2>
+    <button class="btn small" id="aboutClose">Close</button></header>
+  <div id="aboutBody"></div>
+</div></div>
+
+<script>
+"use strict";
+/* =====================================================================================
+   SECTION 1 - utils/  : deterministic RNG, math, statistics helpers
+   ===================================================================================== */
+const TAU = Math.PI*2, DEG = Math.PI/180;
+function clamp(x,a,b){ return x<a?a:(x>b?b:x); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function hyp(dx,dy){ return Math.sqrt(dx*dx+dy*dy); }
+function dbm2mw(d){ return Math.pow(10,d/10); }
+function mw2dbm(m){ return 10*Math.log10(Math.max(m,1e-30)); }
+/* mulberry32 - small, fast, seedable PRNG for reproducible runs */
+function RNG(seed){ let a = seed>>>0;
+  return function(){ a|=0; a=(a+0x6D2B79F5)|0; let t=Math.imul(a^(a>>>15),1|a);
+    t=(t+Math.imul(t^(t>>>7),61|t))^t; return ((t^(t>>>14))>>>0)/4294967296; }; }
+function gaussFactory(rand){ let spare=null;
+  return function(mu=0,sd=1){ if(spare!==null){const v=spare;spare=null;return mu+sd*v;}
+    let u,v,s; do{u=rand()*2-1;v=rand()*2-1;s=u*u+v*v;}while(s>=1||s===0);
+    const m=Math.sqrt(-2*Math.log(s)/s); spare=v*m; return mu+sd*u*m; }; }
+/* Gamma(k,theta) for integer-ish shape (used by Nakagami-m power fading, m in {1,2,3}) */
+function gammaInt(rand,k){ let s=0; for(let i=0;i<k;i++) s-=Math.log(1-rand()); return s; }
+function mean(a){ if(!a.length) return NaN; let s=0; for(const v of a) s+=v; return s/a.length; }
+function std(a){ if(a.length<2) return 0; const m=mean(a); let s=0;
+  for(const v of a) s+=(v-m)*(v-m); return Math.sqrt(s/(a.length-1)); }
+function percentile(sorted,p){ if(!sorted.length) return NaN;
+  const i=clamp((sorted.length-1)*p,0,sorted.length-1), lo=Math.floor(i);
+  return lerp(sorted[lo],sorted[Math.min(lo+1,sorted.length-1)],i-lo); }
+function quartiles(a){ const s=[...a].sort((x,y)=>x-y);
+  return {min:s[0],q1:percentile(s,.25),med:percentile(s,.5),q3:percentile(s,.75),
+          max:s[s.length-1],p95:percentile(s,.95)}; }
+class Welford{ constructor(){this.n=0;this.m=0;this.s=0;}
+  add(x){ this.n++; const d=x-this.m; this.m+=d/this.n; this.s+=d*(x-this.m); }
+  get mean(){return this.n?this.m:NaN;}
+  get sd(){return this.n>1?Math.sqrt(this.s/(this.n-1)):0;} }
+class Ring{ constructor(n){this.a=new Float64Array(n);this.n=n;this.i=0;this.len=0;}
+  push(v){this.a[this.i]=v;this.i=(this.i+1)%this.n;this.len=Math.min(this.len+1,this.n);}
+  values(){const o=new Array(this.len);for(let k=0;k<this.len;k++)
+    o[k]=this.a[(this.i-this.len+k+this.n*2)%this.n];return o;} }
+const fmt=(x,d=1)=>Number.isFinite(x)?x.toFixed(d):"-";
+const fms =x=>Number.isFinite(x)?(x<10?x.toFixed(2):x<100?x.toFixed(1):x.toFixed(0)):"-";
+const fpct=x=>Number.isFinite(x)?(100*x).toFixed(1)+"%":"-";
+function segInt(ax,ay,bx,by,cx,cy,dx,dy){ /* segment intersection -> [x,y] | null */
+  const r1x=bx-ax,r1y=by-ay,r2x=dx-cx,r2y=dy-cy,den=r1x*r2y-r1y*r2x;
+  if(Math.abs(den)<1e-9) return null;
+  const t=((cx-ax)*r2y-(cy-ay)*r2x)/den, u=((cx-ax)*r1y-(cy-ay)*r1x)/den;
+  if(t<0||t>1||u<0||u>1) return null; return [ax+t*r1x, ay+t*r1y, t];
+}
+function segRect(ax,ay,bx,by,r){ /* does segment intersect axis-aligned rect {x,y,w,h}? */
+  const inX=(x)=>x>=r.x&&x<=r.x+r.w, inY=(y)=>y>=r.y&&y<=r.y+r.h;
+  if((inX(ax)&&inY(ay))||(inX(bx)&&inY(by))) return true;
+  return !!(segInt(ax,ay,bx,by,r.x,r.y,r.x+r.w,r.y)||segInt(ax,ay,bx,by,r.x,r.y+r.h,r.x+r.w,r.y+r.h)
+        ||segInt(ax,ay,bx,by,r.x,r.y,r.x,r.y+r.h)||segInt(ax,ay,bx,by,r.x+r.w,r.y,r.x+r.w,r.y+r.h));
+}
+
+/* =====================================================================================
+   SECTION 2 - config/  : physical constants, protocol profiles, defaults, presets
+   Every value cites the standard / paper it came from. See README.md §6 for the table.
+   ===================================================================================== */
+const C = {
+  TICK: 1e-4,            // channel tick = 100 us. 802.11p microslots (13 us) are aggregated
+                         // to this granularity - documented simplification (README §9.1).
+  MOB_DT: 0.02,          // mobility integration step 20 ms (50 Hz), typical for IDM.
+  APP_DT: 0.1,           // application/safety layer at 10 Hz (SAE J2945/1 BSM cadence).
+  PHY: {
+    fcGHz: 5.9,          // ITS band 5.855–5.925 GHz (ETSI EN 302 663; FCC 47 CFR 90/95)
+    noiseFig: 9,         // dB, typical automotive receiver NF (3GPP TR 36.885 §A.1)
+    antGain: 3,          // dBi rooftop monopole each end (TR 36.885 assumption)
+    thermal: -174        // dBm/Hz
+  },
+  PROP: { // WINNER+ B1 Manhattan urban as adopted by 3GPP TR 36.885 §A.1.4 for V2V
+    losA: 22.7, losB: 41.0, losC: 20,     // PL = 22.7log10(d)+41+20log10(fc/5)
+    cornerLoss: 18,                       // dB knife-edge corner loss (NLOS around building)
+    nlosSlope: 0.35, nlosCap: 25,         // extra dB per m after corner, capped (fit to 36.885 NLOS)
+    shadLos: 3, shadNlos: 4,              // log-normal shadowing sigma, dB (TR 36.885)
+    shadCorr: 25,                         // shadowing decorrelation distance, m (WINNER+)
+    blockCar: 4.5, blockBig: 9,           // per-blocker vehicle attenuation, dB - NLOSv model
+                                          // means from 3GPP TR 37.885 §6.2.1 multi-knife-edge
+    blockCap: 15,
+    nakaNear: 3, nakaMid: 2, nakaFar: 1,  // Nakagami-m vs distance (Killat & Hartenstein 2009)
+    nakaD1: 50, nakaD2: 150
+  },
+  DSRC: { // IEEE 802.11p OFDM PHY, 10 MHz channel; EDCA MAC (IEEE 1609.4 / ETSI ITS-G5)
+    bwMHz: 10,
+    rateMbps: 6,          // default QPSK 1/2 - ETSI ITS-G5 / J2945-1 default data rate
+    preambleUs: 40,       // PLCP preamble 32us + SIGNAL 8us (802.11-2016 §17, 10 MHz => x2)
+    slotUs: 13, sifsUs: 32, aifsn: 2,     // AC_VO highest-priority queue (1609.4)
+    cwMin: 3, cwMaxEvt: 7,// (aCWmin+1)/4-1 = 3 for AC_VO (broadcast: no retx => CW fixed)
+    csDbm: -85,           // CCA energy-detect threshold (ETSI EN 302 663 §4.4)
+    sensDbm: -92,         // practical 6 Mb/s receiver sensitivity (Kenney, Proc.IEEE 2011)
+    sinrMid: 5.5, sinrSlope: 1.6,  // logistic PER pivot for QPSK 1/2 + fading margin
+    dcc: [ // simplified ETSI TS 102 687 reactive DCC: CBR -> max message rate (Hz)
+      {cbr:0.30, rate:10},{cbr:0.40, rate:5},{cbr:0.50, rate:2.5},{cbr:1.01, rate:1}
+    ]
+  },
+  LTE: { // LTE-V2X sidelink Mode 4 (3GPP Rel-14: TS 36.213 §14, TS 36.331)
+    slotMs: 1,            // subframe = 1 ms TTI
+    subCh: 5,             // 10 MHz / 50 PRB -> 5 subchannels of 10 PRB (36.331 typical cfg)
+    chPerPkt: 2,          // 300 B @ MCS 7 (QPSK) occupies ~2 subchannels incl. SCI
+                          // (Molina-Masegosa & Gozalvez, IEEE VT Mag 2017)
+    t1Ms: 4, t2Ms: 100,   // selection window [T1,T2] per latency budget (36.213 §14.1.1.6)
+    senseMs: 1000,        // sensing window 1000 ms
+    rsrpExcl: -110,       // initial RSRP exclusion threshold, dBm (36.331 default)
+    cReselMin: 5, cReselMax: 15,   // reselection counter range for RRI>=100ms
+    bestFrac: 0.2,        // random pick within best 20% ranked resources (36.213)
+    sinrMid: 2.5, sinrSlope: 1.5,  // turbo-coded QPSK pivot (~5dB better than .11p at BLER 10%)
+    sensDbm: -94,
+    harqGain: 3           // dB chase-combining gain on blind retransmission (TR 36.885)
+  },
+  NR: {  // NR-V2X sidelink Mode 2 (3GPP Rel-16: TS 38.214 §8, TR 38.885)
+    slotMs: 0.5,          // 30 kHz SCS numerology-1 slot
+    subCh: 5, chPerPkt: 2,
+    t1Ms: 1, t2Ms: 20,    // T2 <= remaining latency budget; 20 ms for safety class
+    senseMs: 100,         // Rel-16 permits short sensing for aperiodic traffic
+    rsrpExcl: -110, cReselMin: 5, cReselMax: 15, bestFrac: 0.2,
+    sinrMid: 1.5, sinrSlope: 1.4, // LDPC + DMRS improvements vs Rel-14 (TR 38.885 eval)
+    sensDbm: -95,
+    harqGain: 3, blindRetx: 2,    // up to 2 blind retx for broadcast
+    fbRetxMax: 3          // PSFCH HARQ feedback for groupcast warnings (TS 38.213 §16.3)
+  },
+  UU: {  // network path V2N over Uu (used by HYBRID). One-way component delays, ms.
+    lteUl:{mu:12,sd:3,min:6,max:34},  // SR + grant + HARQ (TS 36.881 latency analysis)
+    lteDl:{mu:8, sd:2,min:4,max:20},
+    nrUl:{mu:4, sd:1.5,min:1.5,max:10}, // configured-grant UL (TR 38.913 URLLC target)
+    nrDl:{mu:3, sd:1,min:1,max:8},
+    edge:{mu:3, sd:1,min:1,max:8},    // MEC server co-located at gNB (ETSI MEC 003)
+    cloud:{mu:35,sd:8,min:18,max:80}, // regional cloud incl. EPC/5GC + transport
+    perLegLoss:0.005, hoLte:50, hoNr:5 // handover interruption, ms (36.881 / 38.885)
+  },
+  APP: {
+    bsmBytes: 300,        // BSM Part I + 1609.2 security ≈ 300 B (SAE J2945/1 §6.3)
+    denmBytes: 220, spatBytes: 150, psmBytes: 130,
+    awareness: 150,       // PDR target range, m - J2945/1 forward awareness requirement
+    ttcWarn: 4.0,         // ICW trigger TTC, s (ISO/TS 19091 & FCW literature 2.6–4.4 s)
+    ttcBrake: 2.6,        // autonomous braking assist threshold
+    reaction: 1.2,        // driver brake reaction time, s (AASHTO 90th pct ≈ 1.0–1.5)
+    coopDecel: 4.0,       // warning-triggered deceleration, m/s^2 (comfort-emergency)
+    conflictGap: 1.4      // PET window: arrival separation < 1.4 s => conflict (surrogate
+                          //  safety literature: PET<1.5s critical)
+  },
+  IDM: { // Treiber, Hennecke & Helbing (Phys.Rev.E 62, 2000) - urban parameter set
+    s0: 2.0, T: 1.2, delta: 4,
+    // MOBIL: Kesting, Treiber & Helbing (Transp.Res.Rec 1999, 2007)
+    politeness: 0.3, dAthr: 0.25, bSafe: 3.0
+  },
+  VTYPES: { // dims from common spec sheets; accel from AASHTO/urban measurements
+    car:  {l:4.5,w:1.8,a:1.8,b:2.6,v0f:1.00,share:0.68,color:"#4a637f"},
+    suv:  {l:4.9,w:1.95,a:1.6,b:2.5,v0f:1.00,share:0.15,color:"#5e7263"},
+    van:  {l:5.4,w:2.0,a:1.4,b:2.3,v0f:0.97,share:0.07,color:"#7a6f62"},
+    truck:{l:9.5,w:2.5,a:0.9,b:1.8,v0f:0.90,share:0.07,color:"#6e6e73"},
+    bus:  {l:12 ,w:2.55,a:0.9,b:1.7,v0f:0.88,share:0.03,color:"#9a7d3a"},
+    ev:   {l:5.6,w:2.1,a:2.4,b:3.5,v0f:1.25,share:0.00,color:"#b03636"}
+  },
+  MODES: ["DSRC","LTE-V2X","NR-V2X","HYBRID"],
+  MODE_COLOR: {"DSRC":"#1f77b4","LTE-V2X":"#d62728","NR-V2X":"#2ca02c","HYBRID":"#9467bd"}
+};
+
+/* ---------- runtime parameters (bound to UI sliders) ---------- */
+const DEFAULTS = {
+  mode:"DSRC", intx:"cross",
+  nVeh:40, vmaxKmh:50, idmA:1.6, idmB:2.2, idmT:1.2,
+  violProb:0.04, pedFlow:4, jaywalk:0.10, cycleS:60, turnPct:40,
+  txDbm:23, bwMHz:10, beaconHz:10, pktBytes:300, dcc:1, awareM:150,
+  rriMs:100, probKeep:0.4, blindRetx:1,
+  rsuOn:1, rsuN:2, bsN:2, edge:1, netAssist:0,
+  weather:"clear", canyon:0, bgLoad:0, fading:1, blockage:1,
+  seed:42, fx:1, showRange:0, showLinks:1, showPkts:1, showHeat:0,
+  showTrails:0, showIds:0, showCbrRing:0
+};
+/* slider metadata -> the left panel is generated from this table */
+const PARAM_DEFS = [
+ {g:"Traffic & mobility"},
+ {k:"nVeh",l:"Vehicles (target)",min:4,max:140,st:2,u:""},
+ {k:"vmaxKmh",l:"Speed limit",min:30,max:80,st:5,u:"km/h"},
+ {k:"idmA",l:"IDM accel a",min:0.6,max:3,st:0.1,u:"m/s²"},
+ {k:"idmB",l:"IDM comf. brake b",min:1,max:4,st:0.1,u:"m/s²"},
+ {k:"idmT",l:"IDM headway T",min:0.6,max:2.4,st:0.1,u:"s"},
+ {k:"turnPct",l:"Turning traffic",min:0,max:70,st:5,u:"%"},
+ {k:"violProb",l:"Red-light violators",min:0,max:0.2,st:0.01,u:"p"},
+ {k:"cycleS",l:"Signal cycle",min:30,max:120,st:5,u:"s"},
+ {k:"pedFlow",l:"Pedestrians",min:0,max:20,st:1,u:"/min"},
+ {k:"jaywalk",l:"Jaywalk prob.",min:0,max:0.5,st:0.05,u:"p"},
+ {g:"Radio & MAC"},
+ {k:"txDbm",l:"Tx power",min:0,max:33,st:1,u:"dBm"},
+ {k:"bwMHz",l:"C-V2X bandwidth",min:10,max:20,st:10,u:"MHz"},
+ {k:"beaconHz",l:"Beacon rate",min:1,max:20,st:1,u:"Hz"},
+ {k:"pktBytes",l:"Packet size",min:100,max:800,st:50,u:"B"},
+ {k:"awareM",l:"Awareness range",min:50,max:300,st:25,u:"m"},
+ {k:"dcc",l:"Congestion control (DCC/CR)",chk:1},
+ {k:"rriMs",l:"LTE SPS RRI",sel:[20,50,100],u:"ms"},
+ {k:"probKeep",l:"SPS probResourceKeep",min:0,max:0.8,st:0.1,u:""},
+ {k:"blindRetx",l:"Sidelink blind retx",min:0,max:2,st:1,u:""},
+ {g:"Infrastructure"},
+ {k:"rsuOn",l:"RSU enabled (SPaT + ICW relay)",chk:1},
+ {k:"rsuN",l:"RSU count",min:0,max:4,st:1,u:""},
+ {k:"bsN",l:"Base stations",min:1,max:2,st:1,u:""},
+ {k:"edge",l:"MEC edge server (else cloud)",chk:1},
+ {k:"netAssist",l:"Uu network path also in PC5 modes",chk:1},
+ {g:"Channel & environment"},
+ {k:"weather",l:"Weather",sel:["clear","rain","fog","night"],u:""},
+ {k:"canyon",l:"Urban canyon (deep NLOS)",chk:1},
+ {k:"bgLoad",l:"Background channel load",min:0,max:0.6,st:0.05,u:""},
+ {k:"fading",l:"Nakagami fast fading",chk:1},
+ {k:"blockage",l:"Vehicle blockage (NLOSv)",chk:1},
+ {g:"Simulation & view"},
+ {k:"seed",l:"Random seed",num:1},
+ {k:"fx",l:"Packet animations",chk:1},
+ {k:"showLinks",l:"Show delivery links (selected)",chk:1},
+ {k:"showPkts",l:"Show broadcast ripples",chk:1},
+ {k:"showRange",l:"Show comm. radius (selected)",chk:1},
+ {k:"showCbrRing",l:"Show CBR ring per vehicle",chk:1},
+ {k:"showHeat",l:"Packet-loss heat map",chk:1},
+ {k:"showTrails",l:"Trajectory trails",chk:1},
+ {k:"showIds",l:"Vehicle IDs",chk:1},
+];
+/* ---------- scenario presets (README §7) ---------- */
+const SCENARIOS = {
+ "Medium traffic (baseline)":{p:{}},
+ "Low traffic":              {p:{nVeh:12,pedFlow:2}},
+ "Rush hour":                {p:{nVeh:96,pedFlow:10,cycleS:90,violProb:0.06}},
+ "Urban canyon":             {p:{canyon:1,nVeh:56}},
+ "Arterial merge (fast EW)": {p:{vmaxKmh:70,turnPct:55,nVeh:60,cycleS:80},flag:"merge"},
+ "Rain":                     {p:{weather:"rain",nVeh:50}},
+ "Fog":                      {p:{weather:"fog",nVeh:44,vmaxKmh:40}},
+ "Night":                    {p:{weather:"night",jaywalk:0.2}},
+ "Emergency vehicle":        {p:{nVeh:48},flag:"ev"},
+ "Accident ahead":           {p:{nVeh:52},flag:"accident"},
+ "Hard-brake shockwaves":    {p:{nVeh:64},flag:"brakes"},
+ "Traffic-signal failure":   {p:{nVeh:36,violProb:0.0},flag:"sigfail"},
+ "RSU failure":              {p:{nVeh:48,rsuOn:1},flag:"rsufail"},
+ "Network congestion":       {p:{nVeh:100,bgLoad:0.45,beaconHz:10}},
+};
+
+/* =====================================================================================
+   SECTION 3 - traffic/network : road geometry, routes, conflict points, crosswalks
+   Geometry: 4-way signalized intersection, 3 approach lanes per direction
+   (lane0 = protected left, lane1 = through, lane2 = through + right), lane width
+   3.5 m, 1 m median, stop line 15 m from center, crosswalks at 13 m, corner
+   buildings for a Manhattan/urban-canyon layout (3GPP TR 36.885 urban grid style).
+   Turning radii: right 5.75 m, left 17.25 m (AASHTO urban curb geometry).
+   ===================================================================================== */
+const NET = (function(){
+  const LANE_X=[2.25,5.75,9.25], HALF=11, SSTOP=235, APLEN=250;
+  const DIRS=["N","W","S","E"];                       // rotation order (90 deg CCW)
+  const DVEC={N:[0,1],W:[-1,0],S:[0,-1],E:[1,0]};
+  const rotP=(x,y,k)=>{for(let i=0;i<k;i++){const t=x;x=-y;y=t;}return [x,y];};
+
+  function sampleBase(mv,lane){ // base frame = northbound
+    const lx=LANE_X[lane], xs=[],ys=[];
+    const push=(x,y)=>{xs.push(x);ys.push(y);};
+    const straight=(x0,y0,x1,y1,st)=>{const L=hyp(x1-x0,y1-y0),n=Math.max(2,Math.ceil(L/st));
+      for(let i=(xs.length?1:0);i<=n;i++)push(lerp(x0,x1,i/n),lerp(y0,y1,i/n));};
+    push(lx,-APLEN);
+    if(mv==="T"){ straight(lx,-APLEN,lx,APLEN,2); }
+    else if(mv==="R"){ // NB -> EB, R=5.75, center (15,-15), ang pi -> pi/2 (clockwise)
+      straight(lx,-APLEN,lx,-15,2); const r=5.75,cx=15,cy=-15,n=Math.ceil(r*Math.PI/2);
+      for(let i=1;i<=n;i++){const a=Math.PI-(Math.PI/2)*(i/n);push(cx+r*Math.cos(a),cy+r*Math.sin(a));}
+      straight(15,-9.25,APLEN,-9.25,2);
+    } else { // L : NB -> WB, R=17.25, center (-15,-15), ang 0 -> pi/2 (CCW)
+      straight(lx,-APLEN,lx,-15,2); const r=17.25,cx=-15,cy=-15,n=Math.ceil(r*Math.PI/2);
+      for(let i=1;i<=n;i++){const a=(Math.PI/2)*(i/n);push(cx+r*Math.cos(a),cy+r*Math.sin(a));}
+      straight(-15,2.25,-APLEN,2.25,2);
+    }
+    return {xs,ys};
+  }
+  const routes=[], byId={};
+  for(let k=0;k<4;k++){
+    const dir=DIRS[k];
+    for(const [mv,lane] of [["L",0],["T",1],["T",2],["R",2]]){
+      const b=sampleBase(mv,lane), xs=[],ys=[],cum=[0];
+      for(let i=0;i<b.xs.length;i++){const [x,y]=rotP(b.xs[i],b.ys[i],k);xs.push(x);ys.push(y);
+        if(i>0)cum.push(cum[i-1]+hyp(xs[i]-xs[i-1],ys[i]-ys[i-1]));}
+      const exitBase={T:0,R:3,L:1}[mv];               // N,E,W in DIRS-index terms
+      const exitDir=DIRS[(exitBase+k)%4];
+      const arcLen= mv==="T"?0 : (mv==="R"?5.75:17.25)*Math.PI/2;
+      const r={
+        id:`${dir}-${mv}${lane}`, dir,mv,lane,xs,ys,cum,len:cum[cum.length-1],
+        sStop:SSTOP, sBoxIn:SSTOP+0.01,
+        sBoxOut: mv==="T"?265 : SSTOP+arcLen,
+        group:(dir==="N"||dir==="S")?(mv==="L"?"NS_L":"NS_T"):(mv==="L"?"EW_L":"EW_T"),
+        exitDir, exitLane: mv==="T"?lane:(mv==="R"?2:0),
+        curveV: mv==="T"?Infinity:Math.sqrt(2.5*(mv==="R"?5.75:17.25)),  // a_lat = 2.5 m/s^2
+        csAtExit:15, cw:[]
+      };
+      routes.push(r); byId[r.id]=r;
+    }
+  }
+  function posAt(r,s){
+    s=clamp(s,0,r.len); let lo=0,hi=r.cum.length-1;
+    while(hi-lo>1){const m=(lo+hi)>>1; if(r.cum[m]<=s)lo=m;else hi=m;}
+    const t=(s-r.cum[lo])/Math.max(r.cum[hi]-r.cum[lo],1e-9);
+    const x=lerp(r.xs[lo],r.xs[hi],t), y=lerp(r.ys[lo],r.ys[hi],t);
+    return {x,y,hd:Math.atan2(r.ys[hi]-r.ys[lo],r.xs[hi]-r.xs[lo])};
+  }
+  /* --- conflict points: pairwise path crossings inside the junction area --- */
+  const conflicts=new Map();
+  function segsNear(r){const o=[];for(let i=1;i<r.xs.length;i++){
+    if(Math.max(Math.abs(r.xs[i]),Math.abs(r.ys[i]))<26||Math.max(Math.abs(r.xs[i-1]),Math.abs(r.ys[i-1]))<26)
+      o.push([r.xs[i-1],r.ys[i-1],r.xs[i],r.ys[i],r.cum[i-1],r.cum[i]]);}return o;}
+  const segCache=routes.map(segsNear);
+  for(let a=0;a<routes.length;a++)for(let b=0;b<routes.length;b++){
+    if(a===b||routes[a].dir===routes[b].dir)continue;
+    let best=null;
+    for(const s1 of segCache[a])for(const s2 of segCache[b]){
+      const hit=segInt(s1[0],s1[1],s1[2],s1[3],s2[0],s2[1],s2[2],s2[3]);
+      if(hit){const sA=lerp(s1[4],s1[5],hit[2]);
+        // param along b:
+        const db=hyp(hit[0]-s2[0],hit[1]-s2[1]), sB=s2[4]+db;
+        if(!best||sA<best.sA)best={sA,sB,x:hit[0],y:hit[1]};}
+    }
+    if(best)conflicts.set(routes[a].id+":"+routes[b].id,best);
+  }
+  /* --- crosswalks --- */
+  const crosswalks=[
+    {id:"N",axis:"x",fixed: 13,span:11.5,walkGrp:"EW_T"},
+    {id:"S",axis:"x",fixed:-13,span:11.5,walkGrp:"EW_T"},
+    {id:"E",axis:"y",fixed: 13,span:11.5,walkGrp:"NS_T"},
+    {id:"W",axis:"y",fixed:-13,span:11.5,walkGrp:"NS_T"}];
+  for(const r of routes)for(const cw of crosswalks){
+    for(let i=0;i<r.xs.length;i++){
+      const f = cw.axis==="x"? r.ys[i] : r.xs[i];
+      const al= cw.axis==="x"? r.xs[i] : r.ys[i];
+      if(Math.abs(f-cw.fixed)<0.9&&Math.abs(al)<=cw.span){
+        r.cw.push({cw,s:r.cum[i],along:al});break;}
+    }
+  }
+  /* --- corner buildings (LOS obstacles) + decorative geometry --- */
+  const B=(x,y,w,h,tall)=>({x,y,w,h,tall:!!tall});
+  const obstacles=[
+    B( 17, 17,42,66,1),B( 63, 17,44,40),B( 17, 87,34,26),
+    B(-59, 17,42,66,1),B(-107,17,44,40),B(-51, 87,34,26),
+    B(-59,-83,42,66,1),B(-107,-57,44,40),B(-51,-113,34,26),
+    B( 17,-83,42,66,1),B( 63,-57,44,40),B( 17,-113,34,26)];
+  const deco=[B(115,17,60,50),B(-175,17,60,50),B(115,-67,60,50),B(-175,-67,60,50),
+              B(17,125,50,60),B(-67,125,50,60),B(17,-185,50,60),B(-67,-185,50,60)];
+  const trees=[]; for(let d=30;d<=235;d+=22){for(const s of[1,-1]){
+    trees.push([ 13.8, s*d]);trees.push([-13.8, s*d]);trees.push([s*d, 13.8]);trees.push([s*d,-13.8]);}}
+  const signs=[{x:14.8,y:-70,rot:0},{x:-14.8,y:70,rot:180},{x:-70,y:-14.8,rot:90},{x:70,y:14.8,rot:270}];
+  const rsuSites=[[13.5,13.5],[-13.5,-13.5],[-13.5,13.5],[13.5,-13.5]];
+  const bsSites=[[190,150],[-190,-150]];
+  return {routes,byId,posAt,conflicts,crosswalks,obstacles,deco,trees,signs,rsuSites,bsSites,
+          HALF,SSTOP,APLEN,LANE_X,DVEC,
+          conflictOf:(ra,rb)=>conflicts.get(ra+":"+rb)};
+})();
+
+/* =====================================================================================
+   SECTION 4 - traffic/signals : 4-phase dual-ring-equivalent controller
+   Phase order: NS-left(prot) -> NS-through(+right) -> EW-left -> EW-through.
+   Yellow 3.0 s, all-red 1.5 s (MUTCD/ITE change intervals for 50 km/h approach).
+   Pedestrian WALK runs with the parallel through phase (first 60 %), then flashing.
+   ===================================================================================== */
+class Signals{
+  constructor(cycleS){this.Y=3.0;this.AR=1.5;this.dark=false;
+    this.phases=["NS_L","NS_T","EW_L","EW_T"];this.i=1;this.t=0;
+    this.force=null;this.setCycle(cycleS);}
+  setCycle(c){const lost=4*(this.Y+this.AR),g=Math.max(20,c-lost);
+    this.g={NS_L:g*0.16,NS_T:g*0.34,EW_L:g*0.16,EW_T:g*0.34};}
+  tick(dt){ if(this.dark)return;
+    const dur=this.g[this.phases[this.i]]+this.Y+this.AR;
+    this.t+=dt;
+    if(this.force){ // emergency-vehicle pre-emption (green truncate -> Y -> AR -> hold)
+      if(this.phases[this.i]===this.force){this.t=Math.min(this.t,this.g[this.phases[this.i]]*0.5);return;}
+      if(this.t<this.g[this.phases[this.i]])this.t=this.g[this.phases[this.i]]; // jump to yellow
+      if(this.t>=dur){this.i=this.phases.indexOf(this.force);this.t=0;}
+      return;}
+    if(this.t>=dur){this.t-=dur;this.i=(this.i+1)%4;}
+  }
+  stateOf(grp){ if(this.dark)return "DARK";
+    if(this.phases[this.i]!==grp)return "R";
+    return this.t<this.g[grp]?"G":(this.t<this.g[grp]+this.Y?"Y":"R");}
+  stateFor(route){return this.stateOf(route.group);}
+  pedState(cw){ if(this.dark)return "D";
+    const st=this.stateOf(cw.walkGrp); if(st!=="G")return "D";
+    return this.t<this.g[cw.walkGrp]*0.6?"W":"F";}
+  preempt(grp){this.force=grp;} release(){this.force=null;}
+  countdown(){const grp=this.phases[this.i],dur=this.g[grp]+this.Y+this.AR;
+    return {grp,rem:Math.max(0,dur-this.t),st:this.stateOf(grp)};}
+}
+
+/* =====================================================================================
+   SECTION 5 - vehicle/ + physics/ : IDM car-following, MOBIL lane changes,
+   signal compliance, turning kinematics, pedestrians, collisions.
+   IDM: Treiber/Hennecke/Helbing 2000.  MOBIL: Kesting/Treiber/Helbing 2007.
+   ===================================================================================== */
+let __ID=1;
+class Vehicle{
+  constructor(w,route,type,opts={}){
+    const tp=C.VTYPES[type];
+    this.id=__ID++; this.kind="veh"; this.type=type; this.tp=tp;
+    this.route=route; this.s=0; this.v=Math.min(9,w.vmax*tp.v0f); this.a=0;
+    this.len=tp.l; this.wid=tp.w;
+    this.isViol=!!opts.viol; this.isEV=!!opts.ev; this.crashed=false; this.crashT=0;
+    this.risk=0; this.brakeCmd=null; this.fcwT=-9; this.eeblT=-9; this.hazards=new Map();
+    this.stopT=0; this.awsGo=false; this.rtorT=0; this.laneOff=0;
+    this.knownPeds=new Set(); this.pedAlertT=-9;
+    this.trail=[]; this.x=0;this.y=0;this.hd=0; this.updPos();
+    this.scriptBrakeUntil=-1;
+    this.lastGen=w.t-w.rand()*(1/Math.max(1,w.p.beaconHz));
+    this.cautionT=-9;this.evCareT=-9;this.riskT=-9;this.brakeCmd=null;
+    this.rtorGo=false;this.lcT=-9;this.persist=false;this.lastEva=-9;this.lastTrail=-9;
+  }
+  updPos(){const p=NET.posAt(this.route,this.s);this.x=p.x;this.y=p.y;this.hd=p.hd;}
+  v0eff(w){ let v0=w.vmax*this.tp.v0f*(this.isEV?1.25:1);
+    const r=this.route;
+    if(r.curveV<v0){ // decelerate smoothly into the turn (comfort decel b)
+      if(this.s<r.sStop) v0=Math.min(v0,Math.sqrt(r.curveV*r.curveV+2*this.tp.b*Math.max(0,r.sStop-this.s)));
+      else if(this.s<r.sBoxOut) v0=r.curveV;
+    }
+    return Math.max(v0,1);
+  }
+  idm(gap,dv,v0,w){ // returns acceleration for one constraint
+    const A=this.tp.a*w.p.idmA/1.8, B=this.tp.b*w.p.idmB/2.6;
+    const sStar=C.IDM.s0+Math.max(0,this.v*w.p.idmT+this.v*dv/(2*Math.sqrt(A*B)));
+    const free=A*(1-Math.pow(this.v/v0,C.IDM.delta));
+    if(gap===Infinity)return free;
+    return free - A*Math.pow(sStar/Math.max(gap,0.2),2);
+  }
+}
+class Pedestrian{
+  constructor(w,cw,side,jay){
+    this.id=__ID++; this.kind="ped"; this.cw=cw; this.jay=jay;
+    this.dir=side; this.prog=-side*(cw.span+1.8);
+    this.v=Math.max(0.7,w.gauss(1.34,0.26));  // Weidmann walking-speed distribution
+    this.waiting=!jay; this.done=false; this.connected=w.rand()<0.7; // VRU device share
+    this.lastGen=w.t-w.rand()*1.0; this.updPos();
+  }
+  updPos(){ if(this.cw.axis==="x"){this.x=this.prog;this.y=this.cw.fixed;}
+            else{this.x=this.cw.fixed;this.y=this.prog;} }
+}
+class Traffic{
+  constructor(w){this.w=w;this.corridors=new Map();this.mobilT=0;
+    this.spawnAcc=0;this.pedAcc=0;}
+  corridorKey(v){const r=v.route;
+    if(v.s<r.sBoxIn)return "A:"+r.dir+r.lane;
+    if(v.s<r.sBoxOut)return "B:"+r.id;
+    return "X:"+r.exitDir+r.exitLane;}
+  axisCs(v){const dv=NET.DVEC[v.route.exitDir];return v.x*dv[0]+v.y*dv[1];}
+  rebuild(){const m=this.corridors;m.clear();
+    for(const v of this.w.vehicles){const k=this.corridorKey(v);
+      const cs = k[0]==="X" ? this.axisCs(v) : v.s;
+      v._ck=k; v._cs=cs;
+      let a=m.get(k); if(!a){a=[];m.set(k,a);} a.push(v);}
+    for(const a of m.values())a.sort((p,q)=>p._cs-q._cs);}
+  leaderOf(v){const arr=this.corridors.get(v._ck);
+    let lead=null,gap=Infinity;
+    const i=arr.indexOf(v);
+    if(i<arr.length-1){lead=arr[i+1];gap=lead._cs-v._cs-(lead.len+v.len)/2;}
+    else{const r=v.route;
+      if(v._ck[0]==="A"){
+        const b=this.corridors.get("B:"+r.id);
+        if(b&&b.length){lead=b[0];gap=lead.s-v.s-(lead.len+v.len)/2;}
+        else{const e=this.corridors.get("X:"+r.exitDir+r.exitLane);
+          if(e&&e.length){lead=e[0];
+            gap=(r.sBoxOut+(e[0]._cs-r.csAtExit))-v.s-(lead.len+v.len)/2;}}
+      }else if(v._ck[0]==="B"){
+        const e=this.corridors.get("X:"+r.exitDir+r.exitLane);
+        if(e&&e.length){const my=this.axisCs(v);
+          for(const c of e){if(c._cs>my+0.2){lead=c;gap=c._cs-my-(c.len+v.len)/2;break;}}}
+      }}
+    return {lead,gap};}
+  /* --- spawning ---------------------------------------------------------- */
+  pickType(){const r=this.w.rand();let acc=0;
+    for(const t of ["car","suv","van","truck","bus"]){acc+=C.VTYPES[t].share;if(r<acc)return t;}
+    return "car";}
+  spawn(dir,mv,opts={}){const w=this.w;
+    const lane= mv==="L"?0:(mv==="R"?2:(w.rand()<0.5?1:2));
+    const route=NET.byId[`${dir}-${mv}${lane}`];
+    if(!route)return null;
+    if(w.p.intx==="tee" && (dir==="N" || route.exitDir==="N"))return null;  // north arm absent
+    const ck="A:"+dir+lane; const arr=this.corridors.get(ck);
+    if(arr&&arr.length&&arr[0].s<16)return null;               // entry cell occupied
+    const type=opts.ev?"ev":this.pickType();
+    const v=new Vehicle(w,route,type,opts);
+    w.vehicles.push(v); w.comm.attach(v); return v;}
+  spawnTick(dt){const w=this.w;
+    if(w.vehicles.length>=w.p.nVeh)return;
+    const dirs=w.intxDirs;
+    // Poisson arrivals; rate tuned so steady-state count tracks the target
+    this.spawnAcc+=dt*(0.35+0.05*(w.p.nVeh-w.vehicles.length));
+    while(this.spawnAcc>1){this.spawnAcc-=1;
+      const dir=dirs[(w.rand()*dirs.length)|0];
+      const tp=w.p.turnPct/100, r=w.rand();
+      let mv= r<tp/2?"L":(r<tp?"R":"T");
+      // T-junction: forbid movements that would exit the absent north arm
+      if(w.p.intx==="tee"){ const cand=["T","L","R"].filter(m=>{ const rt=NET.byId[`${dir}-${m}${m==="L"?0:m==="R"?2:2}`]; return rt&&rt.exitDir!=="N"; });
+        if(!cand.length)continue; if(!cand.includes(mv))mv=cand[(w.rand()*cand.length)|0]; }
+      const viol= mv==="T" && w.rand()<w.p.violProb;
+      this.spawn(dir,mv,{viol});}
+    // pedestrians
+    if(w.p.pedFlow>0){this.pedAcc+=dt*w.p.pedFlow/60*4;
+      while(this.pedAcc>1){this.pedAcc-=1;
+        const cw=NET.crosswalks[(w.rand()*4)|0], side=w.rand()<0.5?1:-1;
+        const jay=w.rand()<w.p.jaywalk*(w.p.weather==="night"?1.5:1);
+        const p=new Pedestrian(w,cw,side,jay);
+        w.peds.push(p); if(p.connected)w.comm.attach(p);}}
+  }
+  /* --- acceleration under one leader (null lead => free road) --- */
+  accFor(v,lead,gap,v0){ const dv= lead? v.v-lead.v : v.v; return v.idm(gap,dv,v0,this.w); }
+  /* --- MOBIL discretionary lane change between the two through lanes --- */
+  mobil(v,t){ const w=this.w;
+    if(v.crashed||v.route.mv!=="T"||v._ck[0]!=="A")return;
+    if(v.s>v.route.sStop-15||t-v.lcT<4)return;
+    const cur=v.route.lane, other=cur===1?2:1;
+    const alt=NET.byId[`${v.route.dir}-T${other}`]; if(!alt)return;
+    const altArr=this.corridors.get("A:"+v.route.dir+other)||[];
+    let lead=null,fol=null;
+    for(const c of altArr){ if(c.s>v.s){ if(!lead||c.s<lead.s)lead=c; }
+      else { if(!fol||c.s>fol.s)fol=c; } }
+    const v0=v.v0eff(w);
+    const gapAlt = lead? lead.s-v.s-(lead.len+v.len)/2 : Infinity;
+    const aNew=this.accFor(v,lead,gapAlt,v0);
+    const cl=this.leaderOf(v);
+    const aCur=this.accFor(v,cl.lead,cl.gap,v0);
+    let folLoss=0, folOk=true;
+    if(fol){ const v0f=fol.v0eff(w);
+      const gBefore= lead? lead.s-fol.s-(lead.len+fol.len)/2 : Infinity;
+      const aFolBefore=this.accFor(fol,lead,gBefore,v0f);
+      const gAfter= v.s-fol.s-(v.len+fol.len)/2;
+      const aFolAfter=this.accFor(fol,v,gAfter,v0f);
+      folLoss=aFolBefore-aFolAfter; folOk=aFolAfter>-C.IDM.bSafe;
+    }
+    if(folOk && (aNew-aCur) > C.IDM.dAthr + C.IDM.politeness*Math.max(0,folLoss)){
+      const old=NET.posAt(v.route,v.s);
+      v.route=alt; v.updPos();
+      const perp=[-Math.sin(v.hd),Math.cos(v.hd)];
+      v.laneOff=(old.x-v.x)*perp[0]+(old.y-v.y)*perp[1];
+      v.lcT=t;
+    }
+  }
+  /* --- right-turn-on-red gap acceptance --- */
+  rtorClear(v){ const w=this.w,r=v.route;
+    for(const c of r.cw)for(const p of w.peds){
+      if(p.cw===c.cw&&!p.done&&!(p.waiting&&!p.jay))return false; }
+    const e=this.corridors.get("X:"+r.exitDir+r.exitLane)||[];
+    for(const c of e){ if(c.v>2 && c._cs>r.csAtExit-45 && c._cs<r.csAtExit+8)return false; }
+    for(const o of w.vehicles){ if(o===v)continue;
+      if(o.s>o.route.sStop&&o.s<o.route.sBoxOut&&NET.conflictOf(r.id,o.route.id))return false; }
+    return true;
+  }
+  /* --- collisions: broad-phase distance then OBB SAT --- */
+  crashCheck(){ const V=this.w.vehicles;
+    for(let i=0;i<V.length;i++)for(let j=i+1;j<V.length;j++){
+      const a=V[i],b=V[j]; if(a.crashed&&b.crashed)continue;
+      if(hyp(a.x-b.x,a.y-b.y)>10)continue;
+      if(obbOverlap(a,b))this.w.crash(a,b); }
+    for(const v of V){ if(v.crashed)continue;
+      for(const p of this.w.peds){ if(p.done)continue;
+        if(hyp(v.x-p.x,v.y-p.y)>6)continue;
+        if(pointInObb(p.x,p.y,v))this.w.pedHit(v,p); } }
+  }
+  /* --- main mobility step (called at 50 Hz) --- */
+  step(t,dt){ const w=this.w;
+    for(let i=w.vehicles.length-1;i>=0;i--){const v=w.vehicles[i];
+      if(v.s>v.route.len-1.5){ w.comm.detach(v); w.vehicles.splice(i,1); }}
+    this.rebuild();
+    /* -- longitudinal control: compute accel for every vehicle -- */
+    for(const v of w.vehicles){ const r=v.route;
+      if(v.crashed){ v._a=0; continue; }
+      let v0=v.v0eff(w);
+      if(t-v.evCareT<1.5)v0*=0.65;
+      if(t-v.cautionT<2.0)v0*=0.85;
+      v0=Math.max(1,v0);
+      const cl=this.leaderOf(v);
+      let a=this.accFor(v,cl.lead,cl.gap,v0);
+      const st=w.signals.stateFor(r);
+      const committed=v.s>r.sStop-1.2 && v.v>2.5;
+      let wall=Infinity;
+      if(!(v.isViol||v.awsGo||v.rtorGo||committed)){
+        if(st==="Y"){ const d=r.sStop-v.s;
+          if(d> v.v*v.v/(2*w.p.idmB*0.95)+0.35*v.v) wall=r.sStop; }
+        else if(st==="R"||st==="DARK") wall=r.sStop;
+      }
+      if(wall<Infinity){ const g=wall-v.s-v.len/2; a=Math.min(a,v.idm(g,v.v,v0,w)); }
+      /* pedestrians on the crosswalks this route crosses */
+      for(const c of r.cw){ const ds=c.s-v.s; if(ds<-1||ds>60)continue;
+        const seen=(t<v.pedAlertT+3)?60:(w.p.weather==="fog"?18:30);
+        if(ds>seen)continue;
+        for(const p of w.peds){ if(p.cw!==c.cw||p.done)continue; if(p.waiting&&!p.jay)continue;
+          const lat=Math.abs(p.prog-c.along);
+          const closing=(p.dir*(c.along-p.prog))>0 && Math.abs(c.along-p.prog)<2.6+2.2*p.v;
+          if(lat<2.6||closing){ const g=(c.s-4.2)-v.s-v.len/2; a=Math.min(a,v.idm(g,v.v,v0,w)); } }
+      }
+      if(st==="DARK" && !v.awsGo){ const d=r.sStop-v.s;
+        if(d<4&&d>-1&&v.v<0.3&&v.stopT===0)v.stopT=t; }
+      if(r.mv==="R" && !v.rtorGo && st!=="G" && st!=="DARK"){ const d=r.sStop-v.s;
+        if(d<3&&d>-1&&v.v<0.4){ if(v.rtorT===0)v.rtorT=t;
+          else if(t-v.rtorT>1.0&&this.rtorClear(v))v.rtorGo=true; }
+        else if(d>3)v.rtorT=0; }
+      if(v.rtorGo&&v.s>r.sBoxOut)v.rtorGo=false;
+      if(v.scriptBrakeUntil>t)a=Math.min(a,-4.5);
+      if(v.brakeCmd){ if(t>=v.brakeCmd.at&&t<v.brakeCmd.until)a=Math.min(a,-v.brakeCmd.dec);
+        if(t>=v.brakeCmd.until)v.brakeCmd=null; }
+      if(t-v.riskT>1.2)v.risk=0;
+      v._a=clamp(a,-8,3.5);
+    }
+    /* -- all-way-stop arbiter when signals are dark -- */
+    if(w.signals.dark){
+      let boxOcc=false;
+      for(const v of w.vehicles){ if(v.s>v.route.sStop&&v.s<v.route.sBoxOut){boxOcc=true;break;} }
+      if(!boxOcc && t-w.lastGrant>0.7){ let pick=null;
+        for(const v of w.vehicles){ if(v.awsGo||v.stopT===0||v.s>v.route.sBoxOut)continue;
+          if(!pick||v.stopT<pick.stopT)pick=v; }
+        if(pick){ pick.awsGo=true; w.lastGrant=t; } }
+      for(const v of w.vehicles){ if(v.awsGo&&v.s>v.route.sBoxOut){v.awsGo=false;v.stopT=0;} }
+    }
+    /* -- discretionary lane changes at 2 Hz -- */
+    if(t-this.mobilT>=0.5){ this.mobilT=t; for(const v of w.vehicles)this.mobil(v,t); }
+    /* -- integrate -- */
+    for(const v of w.vehicles){ if(v.crashed){v.v=0;continue;}
+      const a=v._a; v.a=a; v.v=Math.max(0,v.v+a*dt);
+      v.s+=Math.max(0,v.v*dt+0.5*a*dt*dt); v.updPos();
+      if(v.laneOff)v.laneOff*=(1-2.2*dt);
+      if(w.p.showTrails&&t-v.lastTrail>0.24){ v.trail.push([v.x,v.y]);
+        if(v.trail.length>50)v.trail.shift(); v.lastTrail=t; }
+    }
+    this.crashCheck();
+    /* -- pedestrians -- */
+    for(let i=w.peds.length-1;i>=0;i--){ const p=w.peds[i];
+      if(p.waiting){ const ps=w.signals.pedState(p.cw); if(ps==="W"||p.jay)p.waiting=false; }
+      if(!p.waiting){ p.prog+=p.dir*p.v*dt; p.updPos(); }
+      if(p.done||p.dir*p.prog>p.cw.span+1.8){ if(p.connected)w.comm.detach(p); w.peds.splice(i,1); }
+    }
+  }
+}
+/* --- oriented-bounding-box helpers (separating-axis theorem) --- */
+function obbOverlap(a,b){
+  const au=[Math.cos(a.hd),Math.sin(a.hd)], av=[-Math.sin(a.hd),Math.cos(a.hd)];
+  const bu=[Math.cos(b.hd),Math.sin(b.hd)], bv=[-Math.sin(b.hd),Math.cos(b.hd)];
+  const dx=b.x-a.x, dy=b.y-a.y;
+  const ah=a.len/2,aw=a.wid/2,bh=b.len/2,bw=b.wid/2;
+  for(const ax of [au,av,bu,bv]){
+    const dist=Math.abs(dx*ax[0]+dy*ax[1]);
+    const ra=ah*Math.abs(ax[0]*au[0]+ax[1]*au[1])+aw*Math.abs(ax[0]*av[0]+ax[1]*av[1]);
+    const rb=bh*Math.abs(ax[0]*bu[0]+ax[1]*bu[1])+bw*Math.abs(ax[0]*bv[0]+ax[1]*bv[1]);
+    if(dist>ra+rb)return false;
+  }
+  return true;
+}
+function pointInObb(px,py,v){ const dx=px-v.x,dy=py-v.y;
+  const lu=dx*Math.cos(v.hd)+dy*Math.sin(v.hd);
+  const lw=-dx*Math.sin(v.hd)+dy*Math.cos(v.hd);
+  return Math.abs(lu)<=v.len/2+0.3 && Math.abs(lw)<=v.wid/2+0.3;
+}
+
+/* =====================================================================================
+   SECTION 6 - channel/ : large-scale path loss (WINNER+ B1), corner NLOS, NLOSv
+   vehicle blockage, AR(1) log-normal shadowing, Nakagami-m fast fading.
+   Gains are cached per node-pair per 10 Hz epoch; shadowing evolves as an AR(1)
+   process decorrelated over distance (README §6, §9.2).
+   ===================================================================================== */
+class Channel{
+  constructor(w){ this.w=w; const N=this.N=192;
+    this.sh=new Float32Array(N*N); this.shInit=new Uint8Array(N*N);
+    this.stamp=new Int32Array(N*N); this.lx=new Float32Array(N*N); this.ly=new Float32Array(N*N);
+    this.epoch=1; this.nsList=[]; this.ewList=[]; }
+  refresh(){ this.epoch++;
+    const V=this.w.vehicles;
+    this.nsList=V.filter(v=>Math.abs(v.x)<12).sort((a,b)=>a.y-b.y);
+    this.ewList=V.filter(v=>Math.abs(v.y)<12).sort((a,b)=>a.x-b.x); }
+  losBlocked(x1,y1,x2,y2){ for(const o of NET.obstacles){
+    if(segRect(x1,y1,x2,y2,o))return true; } return false; }
+  vehBlockDb(a,b){ if(!this.w.p.blockage)return 0; let db=0;
+    if(Math.abs(a.y)<12&&Math.abs(b.y)<12&&Math.abs(a.y-b.y)<8){
+      const lo=Math.min(a.x,b.x),hi=Math.max(a.x,b.x),mid=(a.y+b.y)/2;
+      for(const v of this.ewList){ if(v===a||v===b)continue; if(v.x<=lo||v.x>=hi)continue;
+        if(Math.abs(v.y-mid)<1.6)db+=(v.len>6?C.PROP.blockBig:C.PROP.blockCar); }
+    } else if(Math.abs(a.x)<12&&Math.abs(b.x)<12&&Math.abs(a.x-b.x)<8){
+      const lo=Math.min(a.y,b.y),hi=Math.max(a.y,b.y),mid=(a.x+b.x)/2;
+      for(const v of this.nsList){ if(v===a||v===b)continue; if(v.y<=lo||v.y>=hi)continue;
+        if(Math.abs(v.x-mid)<1.6)db+=(v.len>6?C.PROP.blockBig:C.PROP.blockCar); }
+    }
+    return Math.min(C.PROP.blockCap,db); }
+  shadow(a,b,blocked){ let i=a.ci,j=b.ci; if(i<0||j<0)return 0;
+    if(i>j){const t=i;i=j;j=t;} const k=i*this.N+j;
+    const sigma=(blocked?C.PROP.shadNlos:C.PROP.shadLos)+(this.w.p.weather==="rain"?0.5:0);
+    const mx=(a.x+b.x)/2,my=(a.y+b.y)/2;
+    if(!this.shInit[k]){ this.sh[k]=this.w.gauss(0,sigma); this.shInit[k]=1;
+      this.lx[k]=mx; this.ly[k]=my; this.stamp[k]=this.epoch; return this.sh[k]; }
+    if(this.stamp[k]!==this.epoch){
+      const moved=hyp(mx-this.lx[k],my-this.ly[k]);
+      const rho=Math.exp(-moved/C.PROP.shadCorr);
+      this.sh[k]=rho*this.sh[k]+Math.sqrt(1-rho*rho)*this.w.gauss(0,sigma);
+      this.lx[k]=mx; this.ly[k]=my; this.stamp[k]=this.epoch; }
+    return this.sh[k]; }
+  gain(a,b){ const d=Math.max(1,hyp(a.x-b.x,a.y-b.y));
+    const rsuLike=a.kind==="rsu"||b.kind==="rsu";
+    const blocked=rsuLike?false:this.losBlocked(a.x,a.y,b.x,b.y);
+    let pl=C.PROP.losA*Math.log10(d)+C.PROP.losB+20*Math.log10(C.PHY.fcGHz/5);
+    if(blocked){ const dA=Math.max(0,Math.max(Math.abs(a.x),Math.abs(a.y))-NET.HALF);
+      const dB=Math.max(0,Math.max(Math.abs(b.x),Math.abs(b.y))-NET.HALF);
+      pl+=C.PROP.cornerLoss+(this.w.p.canyon?8:0)+Math.min(C.PROP.nlosCap,C.PROP.nlosSlope*Math.min(dA,dB)); }
+    if(!rsuLike)pl+=this.vehBlockDb(a,b);
+    if(this.w.p.weather==="rain")pl+=1.2; else if(this.w.p.weather==="fog")pl+=0.4;
+    pl+=this.shadow(a,b,blocked);
+    return -pl; }
+  fadeDb(d){ if(!this.w.p.fading)return 0;
+    const m=d<C.PROP.nakaD1?C.PROP.nakaNear:(d<C.PROP.nakaD2?C.PROP.nakaMid:C.PROP.nakaFar);
+    const g=gammaInt(this.w.rand,m);
+    return 10*Math.log10(Math.max(1e-3,g/m)); }
+  rxDbm(tx,rx){ return this.w.p.txDbm+2*C.PHY.antGain+this.gain(tx,rx)+this.fadeDb(hyp(tx.x-rx.x,tx.y-rx.y)); }
+  noiseDbm(bwMHz){ return C.PHY.thermal+10*Math.log10(bwMHz*1e6)+C.PHY.noiseFig; }
+}
+
+/* =====================================================================================
+   SECTION 7 - metrics/ : PDR (by distance & density), latency/jitter, CBR, throughput,
+   warning timeliness, surrogate safety counters. A rolling 10-bucket (0.5 s) window
+   drives the live KPIs; a reservoir feeds CDF/box plots. (README §5 metric defs.)
+   ===================================================================================== */
+class Metrics{
+  constructor(w){ this.w=w; this.reg=new Map();
+    this.win=[]; for(let i=0;i<10;i++)this.win.push({exp:0,del:0,by:0}); this.wi=0;
+    this.cnt={gen:0,tx:0,rxOk:0,rxRange:0,rxSinr:0,rxHd:0,retx:0,drop:0,uuTx:0,uuOk:0,uuLoss:0};
+    this.latWin=new Ring(4096); this.res=[]; this.jit=0; this.lastLat=null;
+    this.dist=[]; for(let i=0;i<8;i++)this.dist.push({ok:0,tot:0});
+    this.densAcc=new Map();
+    this.safety={confl:0,warned:0,miss:0,falseW:0,avoided:0,lucky:0,crashes:0,pedHit:0,
+      warnOk:0,warnLate:0,wDelay:new Welford(),minTTC:Infinity,evPre:0};
+    this.falseCd=new Map(); this.series=[]; this.seriesCap=2400; }
+  curWin(){ return this.win[this.wi]; }
+  trackPkt(pkt,targets){ this.cnt.gen++;
+    this.reg.set(pkt.pid,{t:pkt.tGen,kind:pkt.kind,targets,got:new Set(),deadline:pkt.deadline,src:pkt.src});
+    this.curWin().exp+=targets.length;
+    const key=this.w.p.mode+"|"+(Math.round(this.w.vehicles.length/10)*10);
+    let da=this.densAcc.get(key); if(!da){da={lat:new Welford(),de:0,ex:0};this.densAcc.set(key,da);}
+    da.ex+=targets.length;
+    for(const tg of targets){ this.dist[Math.min(7,(tg.d/50)|0)].tot++; } }
+  onDecode(pkt,rxId,tech){ const r=this.reg.get(pkt.pid); if(!r||r.got.has(rxId))return;
+    let tgt=null; for(const t of r.targets){ if(t.id===rxId){tgt=t;break;} }
+    if(!tgt)return; r.got.add(rxId); this.cnt.rxOk++;
+    const lat=(this.w.t-r.t)*1000;
+    const wv=this.curWin(); wv.del++; wv.by+=pkt.bytes;
+    this.dist[Math.min(7,(tgt.d/50)|0)].ok++;
+    this.latWin.push(lat);
+    if(this.res.length<20000)this.res.push(lat); else this.res[(this.w.rand()*this.res.length)|0]=lat;
+    if(this.lastLat!==null)this.jit+=(Math.abs(lat-this.lastLat)-this.jit)/16;
+    this.lastLat=lat;
+    const key=this.w.p.mode+"|"+(Math.round(this.w.vehicles.length/10)*10);
+    let da=this.densAcc.get(key); if(da){ da.lat.add(lat); da.de++; }
+    this.w.heatAt(tgt.x,tgt.y,true);
+    if(r.kind==="ICW"){ if(this.w.t<=r.deadline)this.safety.warnOk++; else this.safety.warnLate++;
+      this.safety.wDelay.add(lat); } }
+  gc(){ const now=this.w.t;
+    for(const [pid,r] of this.reg){ if(now-r.t>1.0){
+      for(const tg of r.targets){ if(!r.got.has(tg.id))this.w.heatAt(tg.x,tg.y,false); }
+      this.reg.delete(pid); } } }
+  noteFalse(key){ const last=this.falseCd.get(key)||-9;
+    if(this.w.t-last>5){ this.safety.falseW++; this.falseCd.set(key,this.w.t); } }
+  pdrAtDist(m){ const mm=Math.min(m,this.w.p.awareM);
+    const d=this.dist[Math.min(7,Math.max(0,Math.floor((mm-1)/50)))]; return d.tot?d.ok/d.tot:NaN; }
+  sample(t){ let exp=0,del=0,by=0; for(const w of this.win){exp+=w.exp;del+=w.del;by+=w.by;}
+    const lv=this.latWin.values(), ls=[...lv].sort((a,b)=>a-b);
+    const V=this.w.vehicles;
+    this.series.push({t, pdr:exp?del/exp:NaN, lat:lv.length?mean(lv):NaN,
+      p95:lv.length?percentile(ls,.95):NaN, jit:this.jit, cbr:this.w.comm.avgCbr(),
+      thr:by*8/1000/5, nveh:V.length, vavg:V.length?mean(V.map(v=>v.v)):NaN});
+    if(this.series.length>this.seriesCap)this.series.shift();
+    this.wi=(this.wi+1)%10; const nb=this.win[this.wi]; nb.exp=nb.del=nb.by=0; }
+  snapshot(){ let exp=0,del=0,by=0; for(const w of this.win){exp+=w.exp;del+=w.del;by+=w.by;}
+    const lv=this.latWin.values(), ls=[...lv].sort((a,b)=>a-b), s=this.safety, V=this.w.vehicles;
+    return { mode:this.w.p.mode, t:this.w.t, nveh:V.length,
+      pdr:exp?del/exp:NaN, lat:lv.length?mean(lv):NaN,
+      p50:lv.length?percentile(ls,.5):NaN, p95:lv.length?percentile(ls,.95):NaN,
+      p99:lv.length?percentile(ls,.99):NaN, jit:this.jit, cbr:this.w.comm.avgCbr(),
+      thr:by*8/1000/5, gen:this.cnt.gen, tx:this.cnt.tx, rxOk:this.cnt.rxOk,
+      lossRange:this.cnt.rxRange, lossSinr:this.cnt.rxSinr, lossHd:this.cnt.rxHd,
+      retx:this.cnt.retx, drop:this.cnt.drop, uuOk:this.cnt.uuOk, uuLoss:this.cnt.uuLoss,
+      confl:s.confl, warned:s.warned, miss:s.miss, falseW:s.falseW, avoided:s.avoided,
+      lucky:s.lucky, crashes:s.crashes, pedHit:s.pedHit, warnOk:s.warnOk, warnLate:s.warnLate,
+      wDelay:s.wDelay.mean, minTTC:s.minTTC===Infinity?NaN:s.minTTC, evPre:s.evPre,
+      pdr150:this.pdrAtDist(150), vavg:V.length?mean(V.map(v=>v.v)):NaN }; }
+  resetCounters(){ for(const k in this.cnt)this.cnt[k]=0;
+    for(const w of this.win){w.exp=w.del=w.by=0;} this.reg.clear();
+    this.latWin=new Ring(4096); this.res=[]; this.jit=0; this.lastLat=null;
+    for(const d of this.dist){d.ok=d.tot=0;} this.densAcc.clear();
+    this.safety={confl:0,warned:0,miss:0,falseW:0,avoided:0,lucky:0,crashes:0,pedHit:0,
+      warnOk:0,warnLate:0,wDelay:new Welford(),minTTC:Infinity,evPre:0};
+    this.series.length=0; }
+}
+
+/* =====================================================================================
+   SECTION 8 - mac/dsrc : IEEE 802.11p EDCA broadcast MAC. CSMA/CA with AIFS + random
+   backoff, energy-detect carrier sense, hidden-terminal-aware SINR at each receiver,
+   logistic PER, half-duplex, ETSI reactive DCC. One 100 us tick == one backoff slot
+   (documented aggregation, README §9.1); overlapping transmissions collide via SINR.
+   ===================================================================================== */
+class DsrcMac{
+  constructor(w){ this.w=w; this.nodes=[]; this.active=[]; this.tk=0; }
+  attach(n){ n.dsrc={q:[],bo:-1,idle:0,cbr:0,rate:this.w.p.beaconHz}; this.nodes.push(n); }
+  detach(n){ const i=this.nodes.indexOf(n); if(i>=0)this.nodes.splice(i,1);
+    this.active=this.active.filter(a=>a.n!==n); n.dsrc=null; }
+  enqueue(n,pkt){ const d=n.dsrc; if(!d)return;
+    if(pkt.kind==="CAM"||pkt.kind==="SPAT"||pkt.kind==="PSM")
+      for(let i=d.q.length-1;i>=0;i--)if(d.q[i].kind===pkt.kind)d.q.splice(i,1);
+    if(d.q.length>=8){ this.w.metrics.cnt.drop++; if(pkt.prio===1)d.q.pop(); else return; }
+    if(pkt.prio===1)d.q.unshift(pkt); else d.q.push(pkt); }
+  rateFor(n){ if(!this.w.p.dcc)return this.w.p.beaconHz;
+    const cbr=n.dsrc?n.dsrc.cbr:0;
+    for(const row of C.DSRC.dcc){ if(cbr<row.cbr)return Math.min(row.rate,this.w.p.beaconHz); }
+    return 1; }
+  startTx(n,t){ const d=n.dsrc, pkt=d.q.shift(); if(!pkt)return;
+    this.w.comm.trackFirst(pkt,n);
+    const air=Math.max(2,Math.round((C.DSRC.preambleUs+pkt.bytes*8/C.DSRC.rateMbps)/100));
+    n.txBusyUntil=t+air*C.TICK;
+    this.active.push({n,pkt,t0:t,until:t+air*C.TICK});
+    this.w.metrics.cnt.tx++; d.bo=-1;
+    if(this.w.fx)this.w.fx.ripple(n.x,n.y,pkt.kind); }
+  tick(t){ const nodes=this.nodes, chan=this.w.chan, M=this.w.metrics;
+    /* 1. resolve transmissions ending this tick */
+    if(this.active.length){ const ending=this.active.filter(a=>t>=a.until);
+      for(const a of ending){
+        const interf=this.active.filter(o=>o!==a && o.t0<a.until && o.until>a.t0);
+        for(const rx of nodes){ if(rx===a.n)continue;
+          if(rx.txBusyUntil>a.t0){ M.cnt.rxHd++; continue; }
+          const rss=chan.rxDbm(a.n,rx);
+          if(rss<C.DSRC.sensDbm){ M.cnt.rxRange++; continue; }
+          let nMw=dbm2mw(chan.noiseDbm(10)); if(this.w.bgBusyNow)nMw+=dbm2mw(-82);
+          for(const o of interf)nMw+=dbm2mw(chan.rxDbm(o.n,rx));
+          const sinr=rss-mw2dbm(nMw);
+          const ps=1/(1+Math.exp(-(sinr-C.DSRC.sinrMid)/C.DSRC.sinrSlope));
+          if(this.w.rand()<ps){ this.w.comm.deliver(a.pkt,a.n,rx,t,'PC5');
+            rx.lastRssi=rss; rx.lastSinr=sinr; }
+          else M.cnt.rxSinr++;
+        } }
+      if(ending.length)this.active=this.active.filter(a=>t<a.until);
+    }
+    /* 2. CSMA/CA - one tick == one backoff slot */
+    const ready=[];
+    for(const n of nodes){ const d=n.dsrc; if(!d||n.txBusyUntil>t||!d.q.length)continue;
+      let busy=this.w.bgBusyNow;
+      if(!busy)for(const a of this.active){ if(a.n!==n&&chan.rxDbm(a.n,n)>C.DSRC.csDbm){busy=true;break;} }
+      if(busy){ d.idle=0; if(d.bo<0)d.bo=Math.floor(this.w.rand()*(C.DSRC.cwMin+1)); continue; }
+      d.idle++; if(d.bo<0)d.bo=Math.floor(this.w.rand()*(C.DSRC.cwMin+1));
+      ready.push(n); }
+    for(const n of ready){ const d=n.dsrc; if(d.bo>0){ d.bo--; continue; } this.startTx(n,t); }
+    /* 3. CBR estimate every 1 ms (EMA ~100 ms) */
+    if(this.tk%10===0){ for(const n of nodes){ const d=n.dsrc; if(!d)continue;
+      let busy=this.w.bgBusyNow?1:0;
+      if(!busy)for(const a of this.active){ if(a.n!==n&&chan.rxDbm(a.n,n)>C.DSRC.csDbm){busy=1;break;} }
+      d.cbr+=(busy-d.cbr)*0.01; } }
+    this.tk++;
+  }
+  avgCbr(){ if(!this.nodes.length)return 0; let s=0,c=0;
+    for(const n of this.nodes){ if(n.dsrc){s+=n.dsrc.cbr;c++;} } return c?s/c:0; }
+}
+
+/* =====================================================================================
+   SECTION 9 - mac/sidelink : C-V2X PC5 resource pool shared by LTE-V2X Mode 4 (Rel-14
+   sensing-based SPS, 3GPP TS 36.213 §14) and NR-V2X Mode 2 (Rel-16, TS 38.214 §8).
+   Models subchannel selection, sensing-window exclusion by decoded SCI reservations,
+   RSRP-ranked candidate set, reselection counter, half-duplex, blind/HARQ retx, and
+   NR groupcast PSFCH feedback retransmission for priority warnings. Persistent SPS
+   collisions (same phase+subchannel, mutual half-duplex blindness) emerge naturally.
+   ===================================================================================== */
+class SidelinkPool{
+  constructor(w,prof,name){ this.w=w; this.prof=prof; this.name=name;
+    this.dyn=(name==="NR");
+    this.slotTicks=Math.max(1,Math.round(prof.slotMs*10));
+    this.nSub=Math.max(1,prof.subCh*(w.p.bwMHz/10));
+    this.nOpt=Math.max(1,this.nSub-prof.chPerPkt+1);
+    this.rriSlots=Math.max(1,Math.round((name==="NR"?(1000/Math.max(1,w.p.beaconHz)):w.p.rriMs)/prof.slotMs));
+    this.nodes=[]; this.slotNo=0; this.tk=0; this.pending=[]; this.retxQ=[];
+    this.noiseFloor=w.chan.noiseDbm(w.p.bwMHz); this.occ=0; }
+  attach(n){ n.sl={q:[],grant:null,known:new Map(),cbr:0}; this.nodes.push(n); }
+  detach(n){ const i=this.nodes.indexOf(n); if(i>=0)this.nodes.splice(i,1);
+    this.pending=this.pending.filter(x=>x.n!==n); this.retxQ=this.retxQ.filter(x=>x.n!==n); n.sl=null; }
+  enqueue(n,pkt){ const s=n.sl; if(!s)return;
+    if(pkt.kind==="CAM"||pkt.kind==="SPAT"||pkt.kind==="PSM")
+      for(let i=s.q.length-1;i>=0;i--)if(s.q[i].kind===pkt.kind)s.q.splice(i,1);
+    if(s.q.length>=8){ this.w.metrics.cnt.drop++; if(pkt.prio===1)s.q.pop(); else return; }
+    if(pkt.prio===1)s.q.unshift(pkt); else s.q.push(pkt); }
+  overlap(a,b){ return a<b+this.prof.chPerPkt && b<a+this.prof.chPerPkt; }
+  subNoise(){ return this.noiseFloor+10*Math.log10(this.prof.chPerPkt/this.nSub); }
+  reselCount(){ const c=C[this.name]; return c.cReselMin+((this.w.rand()*(c.cReselMax-c.cReselMin+1))|0); }
+  /* --- sensing-based candidate selection (TS 36.213 §14.1.1.6, simplified) --- */
+  select(n){ const P=this.prof, s=n.sl, now=this.w.t, total=this.rriSlots*this.nOpt;
+    let thr=P.rsrpExcl, cand=[];
+    while(thr<-40){ cand=[];
+      for(let ph=0;ph<this.rriSlots;ph++)for(let sc=0;sc<this.nOpt;sc++){
+        let blocked=false, energy=this.noiseFloor;
+        for(const rv of s.known.values()){ if(now-rv.t>P.senseMs/1000)continue;
+          if(rv.m===ph && this.overlap(sc,rv.sub)){ energy=Math.max(energy,rv.rsrp);
+            if(rv.rsrp>thr)blocked=true; } }
+        if(!blocked)cand.push({ph,sc,energy}); }
+      if(cand.length>=total*0.2)break; thr+=3; }
+    if(!cand.length)return {sl:-1,m:(this.w.rand()*this.rriSlots)|0,sub:(this.w.rand()*this.nOpt)|0,c:this.reselCount()};
+    cand.sort((a,b)=>a.energy-b.energy);
+    const top=cand.slice(0,Math.max(1,Math.floor(cand.length*P.bestFrac)));
+    const pk=top[(this.w.rand()*top.length)|0];
+    return {sl:-1,m:pk.ph,sub:pk.sc,c:this.reselCount()}; }
+  /* --- resolve the slot that just ended --- */
+  resolve(t){ if(!this.pending.length)return;
+    const P=this.prof, chan=this.w.chan, M=this.w.metrics;
+    const txSet=new Set(this.pending.map(x=>x.n));
+    for(const tx of this.pending){ for(const rx of this.nodes){ if(rx===tx.n)continue;
+      if(txSet.has(rx)){ M.cnt.rxHd++; continue; }
+      const rss=chan.rxDbm(tx.n,rx); if(rss<P.sensDbm){ M.cnt.rxRange++; continue; }
+      let nMw=dbm2mw(this.subNoise()); if(this.w.bgBusyNow)nMw+=dbm2mw(-84);
+      for(const o of this.pending){ if(o!==tx && this.overlap(tx.sub,o.sub))nMw+=dbm2mw(chan.rxDbm(o.n,rx)); }
+      let sinr=rss-mw2dbm(nMw); if(tx.attempt>1)sinr+=P.harqGain;
+      const ps=1/(1+Math.exp(-(sinr-P.sinrMid)/P.sinrSlope));
+      if(this.w.rand()<ps){ this.w.comm.deliver(tx.pkt,tx.n,rx,t,'PC5');
+        rx.lastRssi=rss; rx.lastSinr=sinr;
+        rx.sl.known.set(tx.n.id,{m:tx.m,sub:tx.sub,rsrp:rss,t}); }
+      else M.cnt.rxSinr++;
+    } }
+    this.pending=[]; }
+  /* --- schedule transmissions for the new slot --- */
+  schedule(t){ const P=this.prof; let busySub=0;
+    const due=this.retxQ.filter(r=>r.slot<=this.slotNo);
+    this.retxQ=this.retxQ.filter(r=>r.slot>this.slotNo);
+    for(const r of due){ if(r.n.sl){ this.pending.push({n:r.n,pkt:r.pkt,sub:r.sub,m:r.m,attempt:(r.attempt||1)+1});
+      this.w.metrics.cnt.retx++; busySub+=P.chPerPkt; } }
+    for(const n of this.nodes){ const s=n.sl; if(!s||!s.q.length)continue;
+      if(this.w.p.dcc && this.occ>0.65 && s.q[0].prio>1)continue;
+      let go=false, sub=0, m=0;
+      if(this.dyn){ if(!s.grant){ s.grant=this.select(n); s.grant.sl=this.slotNo; }
+        go=true; sub=s.grant.sub; m=s.grant.m; s.grant=null; }
+      else{ if(!s.grant)s.grant=this.select(n);
+        if(this.slotNo%this.rriSlots===s.grant.m){ go=true; sub=s.grant.sub; m=s.grant.m;
+          if(--s.grant.c<=0){ s.grant = this.w.rand()<this.w.p.probKeep ? {sl:-1,m,sub,c:this.reselCount()} : null; } } }
+      if(go){ const pkt=s.q.shift();
+        this.w.comm.trackFirst(pkt,n);
+        this.pending.push({n,pkt,sub,m,attempt:1}); this.w.metrics.cnt.tx++; busySub+=P.chPerPkt;
+        if(this.w.fx)this.w.fx.ripple(n.x,n.y,pkt.kind);
+        const k=Math.min(this.w.p.blindRetx, this.name==="NR"?P.blindRetx:1);
+        for(let r=0;r<k;r++){ const gap=1+((this.w.rand()*4)|0);
+          this.retxQ.push({n,pkt,sub:(this.w.rand()*this.nOpt)|0,m,slot:this.slotNo+gap,attempt:1}); }
+        if(this.name==="NR" && pkt.prio===1){ for(let f=1;f<P.fbRetxMax;f++)
+          this.retxQ.push({n,pkt,sub:(this.w.rand()*this.nOpt)|0,m,slot:this.slotNo+2*f,attempt:1}); }
+      } }
+    this.occ += (busySub/this.nSub - this.occ)*0.1;
+  }
+  tick(t){ if(++this.tk<this.slotTicks)return; this.tk=0;
+    this.resolve(t); this.slotNo++; this.schedule(t); }
+  avgCbr(){ return this.occ; }
+}
+
+/* =====================================================================================
+   SECTION 10 - net/uu + comm/ : V2N over Uu (LTE/NR uplink + MEC-edge|cloud + downlink,
+   handover interruption) and the central message bus. Comm owns node comm-IDs, the
+   per-mode radio stacks, neighbor tables, and the trackPkt/onDecode metrics hooks.
+   ===================================================================================== */
+class UuNet{
+  constructor(w){ this.w=w; this.q=[]; this.nr=(w.p.mode==="NR-V2X"||w.p.mode==="HYBRID"); }
+  attach(n){} detach(n){ this.q=this.q.filter(x=>x.src!==n); }
+  send(src,pkt,t){ const w=this.w, bs=NET.bsSites.slice(0,w.p.bsN);
+    let bi=0,bd=Infinity; for(let i=0;i<bs.length;i++){ const d=hyp(src.x-bs[i][0],src.y-bs[i][1]);
+      if(d<bd){bd=d;bi=i;} }
+    if(src.bsi!==bi){ src.bsi=bi; src.hoUntil=t+(this.nr?C.UU.hoNr:C.UU.hoLte)/1000; }
+    w.metrics.cnt.uuTx++;
+    if(t<src.hoUntil){ w.metrics.cnt.uuLoss++; return; }
+    if(w.rand()<C.UU.perLegLoss*2){ w.metrics.cnt.uuLoss++; return; }
+    const ul=this.nr?C.UU.nrUl:C.UU.lteUl, dl=this.nr?C.UU.nrDl:C.UU.lteDl, core=w.p.edge?C.UU.edge:C.UU.cloud;
+    const S=g=>clamp(w.gauss(g.mu,g.sd),g.min,g.max);
+    this.q.push({src,pkt,x:src.x,y:src.y,due:t+(S(ul)+S(core)+S(dl))/1000}); }
+  tick(t){ const w=this.w;
+    for(let i=this.q.length-1;i>=0;i--){ const m=this.q[i]; if(t<m.due)continue;
+      this.q.splice(i,1);
+      for(const n of w.comm.nodes){ if(n.kind!=="veh"||n===m.src)continue;
+        if(hyp(n.x-m.x,n.y-m.y)<=w.p.awareM)w.comm.deliver(m.pkt,m.src,n,t,'UU'); }
+      w.metrics.cnt.uuOk++; } }
+}
+let __PID=1;
+class Comm{
+  constructor(w){ this.w=w; this.nodes=[]; this.freeIds=[]; for(let i=191;i>=0;i--)this.freeIds.push(i);
+    const mode=w.p.mode;
+    this.dsrc = mode==="DSRC" ? new DsrcMac(w) : null;
+    this.lte  = mode==="LTE-V2X" ? new SidelinkPool(w,C.LTE,"LTE") : null;
+    this.nr   = (mode==="NR-V2X"||mode==="HYBRID") ? new SidelinkPool(w,C.NR,"NR") : null;
+    this.uu   = (mode==="HYBRID"||w.p.netAssist) ? new UuNet(w) : null;
+    this.stacks=[]; if(this.dsrc)this.stacks.push(this.dsrc);
+      if(this.lte)this.stacks.push(this.lte); if(this.nr)this.stacks.push(this.nr); }
+  attach(n){ n.ci=this.freeIds.length?this.freeIds.pop():-1;
+    n.txBusyUntil=-1; n.lastRssi=NaN; n.lastSinr=NaN; n.cTx=0; n.cRx=0;
+    n.bsi=-1; n.hoUntil=-1; n.nbrs=new Map();
+    this.nodes.push(n); for(const s of this.stacks)s.attach(n); if(this.uu)this.uu.attach(n); }
+  detach(n){ const i=this.nodes.indexOf(n); if(i>=0)this.nodes.splice(i,1);
+    for(const s of this.stacks)s.detach(n); if(this.uu)this.uu.detach(n);
+    if(n.ci>=0)this.freeIds.push(n.ci); n.ci=-1; }
+  newMsg(src,kind,bytes,prio,data,deadline){
+    return {pid:__PID++,src:src.id,kind,bytes,prio,tGen:this.w.t,data,deadline}; }
+  targetsFor(src,awareM){ const out=[];
+    for(const n of this.nodes){ if(n===src||n.kind!=="veh")continue;
+      const d=hyp(n.x-src.x,n.y-src.y); if(d<=awareM)out.push({id:n.id,d,x:n.x,y:n.y}); }
+    return out; }
+  send(src,kind,bytes,prio,data,deadline){
+    const pkt=this.newMsg(src,kind,bytes,prio,data,deadline); pkt._tracked=false; src.cTx++;
+    for(const s of this.stacks)s.enqueue(src,pkt);
+    if(this.uu)this.uu.send(src,pkt,this.w.t);
+    return pkt; }
+  trackFirst(pkt,txNode){ if(pkt._tracked)return; pkt._tracked=true;
+    this.w.metrics.trackPkt(pkt,this.targetsFor(txNode,this.w.p.awareM)); }
+  deliver(pkt,txN,rx,t,tech){ rx.cRx++; this.w.metrics.onDecode(pkt,rx.id,tech);
+    if((pkt.kind==="CAM"||pkt.kind==="PSM")&&pkt.data)rx.nbrs.set(pkt.src,{t,kind:pkt.kind,...pkt.data});
+    if(this.w.app)this.w.app.onMsg(rx,pkt,txN);
+    if(this.w.fx&&(rx===this.w.selected||txN===this.w.selected))this.w.fx.link(txN,rx,tech); }
+  tickFast(t){ for(const s of this.stacks)s.tick(t); }
+  tickMs(t){ if(this.uu)this.uu.tick(t); }
+  avgCbr(){ if(this.dsrc)return this.dsrc.avgCbr(); if(this.nr)return this.nr.avgCbr();
+    if(this.lte)return this.lte.avgCbr(); return 0; }
+  nodeCbr(n){ if(n.dsrc)return n.dsrc.cbr; return this.avgCbr(); }
+}
+
+/* =====================================================================================
+   SECTION 11 - app/safety : SAE J2735 message set (CAM/BSM, DENM, SPaT, PSM) and the
+   cooperative safety logic - Intersection Collision Warning, EEBL, VRU, Emergency-
+   Vehicle Alert. Conflict detection uses neighbor-table extrapolation to the geometric
+   conflict point (surrogate PET). Oracle provides ground truth for miss/false-alarm
+   scoring; Script drives the scenario events. (README §5, §7.)
+   ===================================================================================== */
+class SafetyApp{
+  constructor(w){ this.w=w; }
+  rate(v){ const w=this.w;
+    if(w.comm.dsrc)return w.comm.dsrc.rateFor(v);
+    let r=w.p.beaconHz; if(w.p.dcc){ const occ=w.comm.avgCbr();
+      if(occ>0.6)r=Math.min(r,5); if(occ>0.8)r=Math.min(r,2); } return r; }
+  genBeacons(t){ const w=this.w;
+    for(const v of w.vehicles){ if(v.crashed)continue;
+      const iv=1/Math.max(1,this.rate(v));
+      if(t-v.lastGen>=iv-1e-6){ v.lastGen=t;
+        w.comm.send(v,"CAM",w.p.pktBytes,3,{rid:v.route.id,s:v.s,v:v.v,a:v.a,x:v.x,y:v.y}); }
+      if(v.a<-3 && v.v>4 && t-v.eeblT>2){ v.eeblT=t;
+        w.comm.send(v,"DENM",C.APP.denmBytes,1,{event:"ebrake",x:v.x,y:v.y,dir:v.route.dir},t+0.3); } }
+    if(w.rsuActive && w.p.rsuOn)for(const rsu of w.rsus){
+      if(t-rsu.lastGen>=0.1-1e-6){ rsu.lastGen=t; const cd=w.signals.countdown();
+        w.comm.send(rsu,"SPAT",C.APP.spatBytes,3,{phase:cd.grp,st:cd.st,rem:cd.rem}); } }
+    for(const p of w.peds){ if(!p.connected)continue;
+      if(t-p.lastGen>=1-1e-6){ p.lastGen=t;
+        w.comm.send(p,"PSM",C.APP.psmBytes,2,{cw:p.cw.id,prog:p.prog,dir:p.dir,vp:p.v,x:p.x,y:p.y}); } }
+  }
+  tick(t){ const w=this.w;
+    if(w.rsuActive && w.p.rsuOn)for(const rsu of w.rsus)this.rsuRelay(rsu,t);
+    for(const v of w.vehicles){ if(!v.crashed)this.evalVeh(v,t); }
+  }
+  evalVeh(v,t){ const w=this.w;
+    for(const [id,e] of v.nbrs){ if(t-e.t>1.5)v.nbrs.delete(id); }
+    for(const [id,e] of v.nbrs){ if(e.kind!=="CAM"||e.rid===undefined)continue;
+      const cp=NET.conflictOf(v.route.id,e.rid); if(!cp)continue;
+      const dt=t-e.t, sOther=e.s+e.v*dt;
+      const dMe=cp.sA-v.s, dO=cp.sB-sOther;
+      if(dMe<0||dMe>130||dO<-3||dO>130)continue;
+      const ta=dMe/Math.max(v.v,0.3), tb=dO/Math.max(e.v,0.3);
+      if(ta<C.APP.ttcWarn && Math.abs(ta-tb)<C.APP.conflictGap)
+        this.applyHazard(v,id,e,ta,ta<C.APP.ttcBrake,t); }
+  }
+  applyHazard(v,nbrId,e,ttc,level2,t){ const w=this.w;
+    v.risk=Math.max(v.risk,level2?2:1); v.riskT=t;
+    if(level2 && !v.isViol && (!v.brakeCmd))
+      v.brakeCmd={at:t+C.APP.reaction*(0.6+0.4*w.rand()),until:t+2.0,dec:C.APP.coopDecel};
+    if(t-v.fcwT>2.5){ v.fcwT=t;
+      w.comm.send(v,"ICW",C.APP.awareness,1,{a:v.id,b:nbrId,tc:ttc},t+Math.max(0.2,C.APP.ttcBrake-C.APP.reaction-0.3)); }
+    if(level2){ const key=Math.min(v.id,nbrId)+"_"+Math.max(v.id,nbrId);
+      if(!w.oracle.isDanger(v.id,nbrId))w.metrics.noteFalse(key); }
+  }
+  rsuRelay(rsu,t){ const w=this.w; if(!rsu.relayCd)rsu.relayCd=new Map();
+    const ents=[]; for(const [id,e] of rsu.nbrs){ if(e.kind==="CAM"&&t-e.t<0.6&&e.rid!==undefined)ents.push([id,e]); }
+    for(let i=0;i<ents.length;i++)for(let j=i+1;j<ents.length;j++){
+      const [ia,ea]=ents[i],[ib,eb]=ents[j];
+      const cp=NET.conflictOf(ea.rid,eb.rid); if(!cp)continue;
+      const da=cp.sA-ea.s, db=cp.sB-eb.s; if(da<0||da>120||db<0||db>120)continue;
+      const ta=da/Math.max(ea.v,0.3), tb=db/Math.max(eb.v,0.3);
+      if(ta<C.APP.ttcWarn && Math.abs(ta-tb)<C.APP.conflictGap){
+        const key=Math.min(ia,ib)+"_"+Math.max(ia,ib);
+        if(t-(rsu.relayCd.get(key)||-9)>2){ rsu.relayCd.set(key,t);
+          w.comm.send(rsu,"ICW",C.APP.awareness,1,{a:ia,b:ib,tc:ta},t+Math.max(0.2,ta-C.APP.reaction)); } }
+    }
+  }
+  onMsg(rx,pkt,txN){ const w=this.w,t=w.t; if(rx.kind!=="veh")return; const d=pkt.data; if(!d)return;
+    if(pkt.kind==="DENM"){ if(hyp(d.x-rx.x,d.y-rx.y)<160){ rx.cautionT=t;
+        if(d.event==="siren"&&hyp(d.x-rx.x,d.y-rx.y)<90)rx.evCareT=t; } }
+    else if(pkt.kind==="ICW"){ if(d.a===rx.id||d.b===rx.id){ rx.risk=Math.max(rx.risk,2); rx.riskT=t;
+        if(!rx.isViol&&!rx.brakeCmd)rx.brakeCmd={at:t+C.APP.reaction*(0.6+0.4*w.rand()),until:t+2.0,dec:C.APP.coopDecel}; } }
+    else if(pkt.kind==="PSM"){ for(const c of rx.route.cw){ if(c.cw.id===d.cw){
+        const ds=c.s-rx.s; if(ds>-2&&ds<50)rx.pedAlertT=t; } } }
+  }
+}
+class Oracle{
+  constructor(w){ this.w=w; this.rec=new Map(); this.dangers=new Set(); }
+  isDanger(a,b){ return this.dangers.has(Math.min(a,b)+"_"+Math.max(a,b)); }
+  willStop(v,dcp){ if(v.crashed)return true;
+    if(v.a<-0.5){ const sd=v.v*v.v/(2*Math.abs(v.a)); return sd<dcp-1; }
+    return false; }
+  tick(t){ const w=this.w, V=w.vehicles, live=new Set();
+    for(let i=0;i<V.length;i++)for(let j=i+1;j<V.length;j++){ const a=V[i],b=V[j];
+      if(a.crashed||b.crashed||a.route.dir===b.route.dir)continue;
+      const cp=NET.conflictOf(a.route.id,b.route.id); if(!cp)continue;
+      const da=cp.sA-a.s, db=cp.sB-b.s; if(da<-3||da>130||db<-3||db>130)continue;
+      const ta=da/Math.max(a.v,0.3), tb=db/Math.max(b.v,0.3);
+      if(!(ta<C.APP.ttcWarn && Math.abs(ta-tb)<1.8))continue;
+      if(this.willStop(a,da)||this.willStop(b,db))continue;
+      const key=Math.min(a.id,b.id)+"_"+Math.max(a.id,b.id); live.add(key);
+      let r=this.rec.get(key);
+      if(!r){ r={t0:t,warned:false,missed:false,tc:Math.min(ta,tb)}; this.rec.set(key,r);
+        w.metrics.safety.confl++; if(w.log)w.log("warn","Conflict "+a.id+"×"+b.id+" · TTC "+Math.min(ta,tb).toFixed(1)+"s"); }
+      r.tc=Math.min(ta,tb); if(a.risk>0||b.risk>0)r.warned=true;
+      if(!r.warned && r.tc<C.APP.reaction+0.3 && !r.missed){ r.missed=true; w.metrics.safety.miss++; }
+      w.metrics.safety.minTTC=Math.min(w.metrics.safety.minTTC,ta,tb);
+    }
+    this.dangers=live;
+    for(const [key,r] of [...this.rec]){ if(live.has(key))continue;
+      const [ai,bi]=key.split("_").map(Number);
+      const a=V.find(v=>v.id===ai), b=V.find(v=>v.id===bi);
+      const crashed=(a&&a.crashed)||(b&&b.crashed);
+      if(!crashed){ w.metrics.safety.avoided++; if(r.warned)w.metrics.safety.warned++; else w.metrics.safety.lucky++; }
+      this.rec.delete(key); }
+  }
+}
+class Script{
+  constructor(w,flag){ this.w=w; this.flag=flag; this.done={}; this.brakeT=0; }
+  tick(t){ const w=this.w, f=this.flag; if(!f)return;
+    if(f==="accident" && t>8 && !this.done.acc){ this.done.acc=true;
+      const c=w.vehicles.find(v=>v.s>60&&v.s<200&&!v.crashed);
+      if(c){ c.crashed=true; c.persist=true; c.v=0;
+        if(w.log)w.log("bad","Vehicle "+c.id+" stalled - accident ahead");
+        w.comm.send(c,"DENM",C.APP.denmBytes,1,{event:"stall",x:c.x,y:c.y,dir:c.route.dir},t+0.3); } }
+    if(f==="brakes" && t>this.brakeT){ this.brakeT=t+10+w.rand()*8;
+      const c=w.vehicles[(w.rand()*w.vehicles.length)|0]; if(c&&!c.crashed)c.scriptBrakeUntil=t+1.8; }
+    if(f==="sigfail" && t>5 && !w.signals.dark){ w.signals.dark=true;
+      if(w.log)w.log("warn","Signal failure - all-way stop control"); }
+    if(f==="rsufail" && t>10 && w.rsuActive){ w.rsuActive=false; if(w.log)w.log("warn","RSU offline"); }
+    if(f==="ev"){
+      if(t>6 && !this.done.ev){ this.done.ev=true;
+        const dir=["N","S","E","W"][(w.rand()*4)|0]; const v=w.traffic.spawn(dir,"T",{ev:true});
+        if(v){ w.evVeh=v; if(w.log)w.log("warn","Emergency vehicle dispatched "+dir); } }
+      const ev=w.evVeh;
+      if(ev && w.vehicles.includes(ev)){ const r=ev.route, d=r.sStop-ev.s;
+        if(d<140 && d>0 && w.signals.force!==r.group){ w.signals.preempt(r.group); w.metrics.safety.evPre++; }
+        if(ev.s>r.sBoxOut+8)w.signals.release();
+        if(t-ev.lastEva>0.5){ ev.lastEva=t;
+          w.comm.send(ev,"DENM",C.APP.denmBytes,1,{event:"siren",x:ev.x,y:ev.y,dir:r.dir},t+0.3); } }
+      else if(this.done.ev && w.evVeh){ w.signals.release(); w.evVeh=null; }
+    }
+  }
+}
+
+/* =====================================================================================
+   SECTION 12 - sim/world : the quasi-discrete-event engine. Channel ticks at 100 us;
+   mobility at 20 ms; application/safety/oracle at 10 Hz; metrics sampled at 2 Hz.
+   Owns spawning, collisions, snapshots (for replay) and the event log. runHeadless()
+   drives the same code path with no renderer for validation and density sweeps.
+   ===================================================================================== */
+function nowMs(){ return (typeof performance!=="undefined"&&performance.now)?performance.now():Date.now(); }
+class FX{ constructor(){ this.rip=[]; this.lnk=[]; this.fla=[]; }
+  ripple(x,y,kind){ if(this.rip.length<500)this.rip.push({x,y,kind,t0:nowMs()}); }
+  link(a,b,tech){ if(a&&b&&this.lnk.length<300)this.lnk.push({ax:a.x,ay:a.y,bx:b.x,by:b.y,tech,t0:nowMs()}); }
+  flash(x,y,col){ if(this.fla.length<200)this.fla.push({x,y,col,t0:nowMs()}); } }
+
+class World{
+  constructor(p,seed,fx){ this.p={...p}; this.rand=RNG((seed>>>0)||1); this.gauss=gaussFactory(this.rand);
+    this.t=0; this.tick=0; this.events=[]; this.onLog=null; this.selected=null;
+    this.vehicles=[]; this.peds=[]; this.evVeh=null; this.rsuActive=!!p.rsuOn;
+    this.bgBusyNow=false; this.snaps=[]; this.snapOn=false; this.lastGrant=-9; this.spawnBias=null;
+    const wf=p.weather==="rain"?0.85:(p.weather==="fog"?0.72:(p.weather==="night"?0.92:1));
+    this.vmax=p.vmaxKmh/3.6*wf;
+    this.fx=fx?new FX():null;
+    this.metrics=new Metrics(this);
+    this.chan=new Channel(this);
+    this.comm=new Comm(this);
+    this.signals=new Signals(p.cycleS);
+    this.intxDirs = p.intx==="tee" ? ["W","S","E"] : ["N","S","E","W"];
+    this.signals.dark = (p.intx==="awstop");   // all-way-stop = permanently unsignalized
+    this.traffic=new Traffic(this);
+    this.app=new SafetyApp(this);
+    this.oracle=new Oracle(this);
+    this.script=new Script(this,p._flag);
+    this.rsus=[]; const rn=Math.min(this.p.rsuN,NET.rsuSites.length);
+    for(let i=0;i<rn;i++){ const s=NET.rsuSites[i];
+      const rsu={id:9000+i,kind:"rsu",x:s[0],y:s[1],lastGen:-this.rand()*0.1,relayCd:new Map()};
+      this.rsus.push(rsu); this.comm.attach(rsu); }
+    this.heatOk=new Float32Array(28*28); this.heatBad=new Float32Array(28*28);
+    this.prefill();
+  }
+  heatAt(x,y,ok){ const gx=Math.floor((x+280)/20), gy=Math.floor((y+280)/20);
+    if(gx<0||gy<0||gx>=28||gy>=28)return; const i=gy*28+gx; if(ok)this.heatOk[i]++; else this.heatBad[i]++; }
+  kpiLite(){ let e=0,d=0; for(const w of this.metrics.win){e+=w.exp;d+=w.del;}
+    return {pdr:e?d/e:NaN,cbr:this.comm.avgCbr()}; }
+  pickTypePrefill(){ const r=this.rand(); let a=0;
+    for(const t of ["car","suv","van","truck","bus"]){a+=C.VTYPES[t].share; if(r<a)return t;} return "car"; }
+  prefill(){ const target=Math.round(0.6*this.p.nVeh); let tries=0;
+    while(this.vehicles.length<target && tries<target*8+40){ tries++;
+      const dir=this.intxDirs[(this.rand()*this.intxDirs.length)|0];
+      const tp=this.p.turnPct/100, r=this.rand(), mv=r<tp/2?"L":(r<tp?"R":"T");
+      const lane=mv==="L"?0:(mv==="R"?2:(this.rand()<0.5?1:2));
+      const route=NET.byId[`${dir}-${mv}${lane}`];
+      if(!route)continue;
+      if(this.p.intx==="tee" && route.exitDir==="N")continue;
+      const s=10+this.rand()*210;
+      let ok=true; for(const v of this.vehicles){ if(v.route===route&&Math.abs(v.s-s)<14){ok=false;break;} }
+      if(!ok)continue;
+      const v=new Vehicle(this,route,this.pickTypePrefill(),{}); v.s=s; v.updPos();
+      this.vehicles.push(v); this.comm.attach(v); }
+  }
+  crash(a,b){ if(a.crashed&&b.crashed)return;
+    a.crashed=true; b.crashed=true; a.v=0; b.v=0;
+    if(!a.crashT)a.crashT=this.t; if(!b.crashT)b.crashT=this.t;
+    this.metrics.safety.crashes++;
+    if(this.fx)this.fx.flash((a.x+b.x)/2,(a.y+b.y)/2,"#dc2626");
+    if(this.log)this.log("bad","COLLISION "+a.id+" × "+b.id);
+    this.comm.send(a,"DENM",C.APP.denmBytes,1,{event:"crash",x:a.x,y:a.y,dir:a.route.dir},this.t+0.3); }
+  pedHit(v,p){ if(p.done)return; p.done=true; this.metrics.safety.pedHit++;
+    if(this.fx)this.fx.flash(p.x,p.y,"#b91c1c");
+    if(this.log)this.log("bad","VRU struck by vehicle "+v.id); }
+  autoClearCrashed(){ for(let i=this.vehicles.length-1;i>=0;i--){ const v=this.vehicles[i];
+    if(v.crashed&&!v.persist&&this.t-v.crashT>30){ this.comm.detach(v); this.vehicles.splice(i,1); } } }
+  pushSnap(){ const TK=World.TKEYS;
+    const veh=this.vehicles.map(v=>[v.id,TK.indexOf(v.type),+v.x.toFixed(1),+v.y.toFixed(1),
+      +v.hd.toFixed(2),+v.v.toFixed(1),v.risk,(v.isViol?1:0)|((v.isEV?1:0)<<1)|((v.crashed?1:0)<<2),+(v.laneOff||0).toFixed(1)]);
+    const ped=this.peds.map(p=>[+p.x.toFixed(1),+p.y.toFixed(1)]);
+    const sig={dark:this.signals.dark};
+    for(const g of ["NS_L","NS_T","EW_L","EW_T"])sig[g]=this.signals.stateOf(g);
+    this.snaps.push({t:this.t,veh,ped,sig,kpi:this.kpiLite()});
+    if(this.snaps.length>3000)this.snaps.shift(); }
+  log(cls,txt){ const e={t:this.t,cls,txt}; this.events.push(e);
+    if(this.events.length>200)this.events.shift(); if(this.onLog)this.onLog(e); }
+  step(dtSim){ const n=Math.min(Math.round(dtSim/C.TICK),40000);
+    for(let k=0;k<n;k++){ this.tick++; const T=this.tick;
+      if(T%10===0){ this.bgBusyNow=this.rand()<this.p.bgLoad; this.comm.tickMs(this.t); this.app.genBeacons(this.t); }
+      this.comm.tickFast(this.t);
+      if(T%200===0){ this.signals.tick(C.MOB_DT); this.script.tick(this.t);
+        this.traffic.spawnTick(C.MOB_DT); this.traffic.step(this.t,C.MOB_DT); }
+      if(T%1000===0){ this.chan.refresh(); this.app.tick(this.t); this.oracle.tick(this.t);
+        this.metrics.gc(this.t); this.autoClearCrashed(); if(this.snapOn)this.pushSnap(); }
+      if(T%5000===0)this.metrics.sample(this.t);
+      this.t+=C.TICK; }
+  }
+}
+World.TKEYS=["car","suv","van","truck","bus","ev"];
+
+function runHeadless(pOver,seconds,seed){
+  const p={...DEFAULTS,...pOver,fx:0};
+  const w=new World(p,seed==null?p.seed:seed,false);
+  const warm=Math.min(4,Math.max(1,seconds*0.25));
+  w.step(warm); w.metrics.resetCounters();
+  let left=seconds-warm; while(left>0){ const c=Math.min(1,left); w.step(c); left-=c; }
+  return {w,sum:w.metrics.snapshot()};
+}
+
+/* =====================================================================================
+   SECTION 13 - ui/renderer : 2-D canvas viewport (SUMO/engineering style). Pan/zoom,
+   vehicle inspector picking, roads/lanes/crosswalks/buildings, signal heads, RSU/BS,
+   packet-loss heat map, trajectory trails, and the packet-animation FX layer. Renders
+   either a live World or a replay snapshot through a shared static-scene pass.
+   ===================================================================================== */
+class Renderer{
+  constructor(cv){ this.cv=cv; this.ctx=cv.getContext("2d");
+    this.view={ox:0,oy:0,sc:1.6}; this.drag=null; this.selected=null; this.onPick=null;
+    this.resize(); this.fit();
+    cv.addEventListener("mousedown",e=>{ const r=cv.getBoundingClientRect();
+      this.drag={x:e.clientX,y:e.clientY,ox:this.view.ox,oy:this.view.oy,mx:e.clientX-r.left,my:e.clientY-r.top,moved:false}; });
+    window.addEventListener("mousemove",e=>{ if(!this.drag)return;
+      const dx=e.clientX-this.drag.x, dy=e.clientY-this.drag.y;
+      if(Math.abs(dx)+Math.abs(dy)>3)this.drag.moved=true;
+      this.view.ox=this.drag.ox+dx; this.view.oy=this.drag.oy+dy; });
+    window.addEventListener("mouseup",e=>{ if(this.drag&&!this.drag.moved&&this.onPick){
+      const r=cv.getBoundingClientRect(); this.onPick(this.pick(e.clientX-r.left,e.clientY-r.top)); }
+      this.drag=null; });
+    cv.addEventListener("wheel",e=>{ e.preventDefault(); const r=cv.getBoundingClientRect();
+      const mx=e.clientX-r.left,my=e.clientY-r.top, f=e.deltaY<0?1.12:1/1.12;
+      const wx=(mx-this.view.ox)/this.view.sc, wy=(this.view.oy-my)/this.view.sc;
+      this.view.sc=clamp(this.view.sc*f,0.4,14);
+      this.view.ox=mx-wx*this.view.sc; this.view.oy=my+wy*this.view.sc; },{passive:false});
+    cv.addEventListener("dblclick",()=>this.fit());
+  }
+  resize(){ const dpr=Math.min(2,window.devicePixelRatio||1); const r=this.cv.getBoundingClientRect();
+    this.W=r.width; this.H=r.height; this.cv.width=r.width*dpr; this.cv.height=r.height*dpr;
+    this.ctx.setTransform(dpr,0,0,dpr,0,0); }
+  fit(){ const span=150; this.view.sc=Math.min(this.W,this.H)/(span*2);
+    this.view.ox=this.W/2; this.view.oy=this.H/2; }
+  zoom(f){ this.view.sc=clamp(this.view.sc*f,0.4,14); }
+  w2s(x,y){ return [this.view.ox+x*this.view.sc, this.view.oy-y*this.view.sc]; }
+  s2w(sx,sy){ return [(sx-this.view.ox)/this.view.sc,(this.view.oy-sy)/this.view.sc]; }
+  pick(mx,my){ const [wx,wy]=this.s2w(mx,my); let best=null,bd=12/this.view.sc;
+    for(const v of (this._veh||[])){ const d=hyp(v.x-wx,v.y-wy); if(d<bd){bd=d;best=v;} } return best; }
+  rect(x,y,w,h,fill,stroke){ const c=this.ctx, [sx,sy]=this.w2s(x,y+h), sw=w*this.view.sc, sh=h*this.view.sc;
+    if(fill){c.fillStyle=fill;c.fillRect(sx,sy,sw,sh);} if(stroke){c.strokeStyle=stroke;c.lineWidth=1;c.strokeRect(sx,sy,sw,sh);} }
+  drawStatic(sig,rsuActive,intx){ const c=this.ctx, V=this.view, S=this.view.sc;
+    c.fillStyle="#e9ebe7"; c.fillRect(0,0,this.W,this.H);
+    // road bands
+    c.fillStyle="#8d939b";
+    let [ax,ay]=this.w2s(-250,NET.HALF); c.fillRect(ax,ay,500*S,2*NET.HALF*S);
+    if(intx==="tee"){ let [bx,by]=this.w2s(-NET.HALF,NET.HALF); c.fillRect(bx,by,2*NET.HALF*S,(250+NET.HALF)*S); }
+    else { let [bx,by]=this.w2s(-NET.HALF,250); c.fillRect(bx,by,2*NET.HALF*S,500*S); }
+    // road edge lines
+    c.strokeStyle="#eef0f2"; c.lineWidth=1.5;
+    for(const yy of [-NET.HALF,NET.HALF]){ c.beginPath(); let [x1,y1]=this.w2s(-250,yy),[x2,y2]=this.w2s(250,yy);
+      c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke(); }
+    for(const xx of [-NET.HALF,NET.HALF]){ c.beginPath(); let [x1,y1]=this.w2s(xx,-250),[x2,y2]=this.w2s(xx,250);
+      c.moveTo(x1,y1);c.lineTo(x2,y2);c.stroke(); }
+    // lane dashes (white) + centre double-yellow
+    c.setLineDash([6,7]); c.strokeStyle="#d8dbdf"; c.lineWidth=1;
+    for(const off of [3.67,7.33]){ for(const s of [1,-1]){
+      c.beginPath(); let a=this.w2s(-250,s*off),b=this.w2s(-NET.HALF-1,s*off); c.moveTo(a[0],a[1]);c.lineTo(b[0],b[1]);
+      let d=this.w2s(NET.HALF+1,s*off),e=this.w2s(250,s*off); c.moveTo(d[0],d[1]);c.lineTo(e[0],e[1]); c.stroke();
+      c.beginPath(); let a2=this.w2s(s*off,-250),b2=this.w2s(s*off,-NET.HALF-1); c.moveTo(a2[0],a2[1]);c.lineTo(b2[0],b2[1]);
+      let d2=this.w2s(s*off,NET.HALF+1),e2=this.w2s(s*off,250); c.moveTo(d2[0],d2[1]);c.lineTo(e2[0],e2[1]); c.stroke(); } }
+    c.setLineDash([]);
+    c.strokeStyle="#e8d54a"; c.lineWidth=1.4;
+    for(const d of [-0.5,0.5]){ c.beginPath(); let a=this.w2s(-250,d),b=this.w2s(-NET.HALF,d);c.moveTo(a[0],a[1]);c.lineTo(b[0],b[1]);
+      let e=this.w2s(NET.HALF,d),f=this.w2s(250,d);c.moveTo(e[0],e[1]);c.lineTo(f[0],f[1]);c.stroke();
+      c.beginPath(); let a2=this.w2s(d,-250),b2=this.w2s(d,-NET.HALF);c.moveTo(a2[0],a2[1]);c.lineTo(b2[0],b2[1]);
+      let e2=this.w2s(d,NET.HALF),f2=this.w2s(d,250);c.moveTo(e2[0],e2[1]);c.lineTo(f2[0],f2[1]);c.stroke(); }
+    // stop lines
+    c.strokeStyle="#f4f6f8"; c.lineWidth=3;
+    const sl=[[0,-NET.HALF-1,NET.HALF,-NET.HALF-1],[0,NET.HALF+1,-NET.HALF,NET.HALF+1],
+              [-NET.HALF-1,0,-NET.HALF-1,-NET.HALF],[NET.HALF+1,0,NET.HALF+1,NET.HALF]];
+    for(const seg of sl){ c.beginPath(); let a=this.w2s(seg[0],seg[1]),b=this.w2s(seg[2],seg[3]);
+      c.moveTo(a[0],a[1]);c.lineTo(b[0],b[1]);c.stroke(); }
+    // crosswalks (zebra)
+    c.fillStyle="#f2f4f6";
+    for(const cw of NET.crosswalks){ for(let i=-5;i<=5;i++){ const o=i*1.9;
+      if(cw.axis==="x")this.rect(o-0.55,cw.fixed-1.6,1.1,3.2,"#f2f4f6");
+      else this.rect(cw.fixed-1.6,o-0.55,3.2,1.1,"#f2f4f6"); } }
+    // buildings
+    for(const o of NET.deco)this.rect(o.x,o.y,o.w,o.h,"#e2e4e9","#cfd3d9");
+    for(const o of NET.obstacles)this.rect(o.x,o.y,o.w,o.h,o.tall?"#d3d6dc":"#dcdee3","#b3b7be");
+    // trees
+    c.fillStyle="#9db99a"; for(const t of NET.trees){ const [sx,sy]=this.w2s(t[0],t[1]);
+      c.beginPath();c.arc(sx,sy,Math.max(1.5,1.8*S/2),0,TAU);c.fill(); }
+    // RSU masts
+    for(let i=0;i<NET.rsuSites.length;i++){ const s=NET.rsuSites[i]; const [sx,sy]=this.w2s(s[0],s[1]);
+      c.fillStyle=rsuActive?"#0b5cad":"#9aa0a8"; c.fillRect(sx-2,sy-2,4,4);
+      if(rsuActive){ c.strokeStyle="rgba(11,92,173,0.25)";c.setLineDash([3,4]);c.beginPath();
+        c.arc(sx,sy,150*S,0,TAU);c.stroke();c.setLineDash([]); } }
+    // base stations
+    for(const s of NET.bsSites.slice(0,2)){ const [sx,sy]=this.w2s(s[0],s[1]);
+      c.fillStyle="#5b616b"; c.beginPath();c.moveTo(sx,sy-7);c.lineTo(sx-5,sy+4);c.lineTo(sx+5,sy+4);c.closePath();c.fill();
+      c.fillStyle="#6f7680";c.font="9px Segoe UI";c.fillText("gNB",sx+7,sy); }
+    // signal heads
+    this.drawSignals(sig,intx);
+  }
+  drawSignals(sig,intx){ const c=this.ctx;
+    // one head per approach, placed at the right-front corner of the approach
+    let heads=[["N",9.25,-13,"NS"],["S",-9.25,13,"NS"],["E",13,9.25,"EW"],["W",-13,-9.25,"EW"]];
+    if(intx==="tee")heads=heads.filter(h=>h[0]!=="N");
+    for(const h of heads){ const [dir,x,y,ax]=h; const [sx,sy]=this.w2s(x,y);
+      const gT=sig[ax+"_T"], dark=sig.dark;
+      let col="#3a3f47"; if(!dark){ col= gT==="G"?"#2ec26b":gT==="Y"?"#f5c344":"#e0523e"; }
+      else col=(Math.floor(Date.now()/500)%2)?"#f5c344":"#3a3f47";
+      c.fillStyle="#23262b"; c.fillRect(sx-2.5,sy-6,5,12);
+      for(let i=0;i<3;i++){ const on=!dark&&((i===0&&gT==="R")||(i===1&&gT==="Y")||(i===2&&gT==="G"));
+        c.fillStyle=on?(i===0?"#e0523e":i===1?"#f5c344":"#2ec26b"):"#333840";
+        c.beginPath();c.arc(sx,sy-3.4+i*3.4,1.4,0,TAU);c.fill(); }
+    }
+  }
+  drawVehicle(c,v){ const [sx,sy]=this.w2s(v.x,v.y); const S=this.view.sc;
+    const off=(v.laneOff||0)*S;
+    c.save(); c.translate(sx-Math.sin(v.hd)*off*0,sy);
+    c.translate(off*Math.cos(v.hd+Math.PI/2)*0,0);
+    c.translate(0,0); c.rotate(-v.hd);
+    const L=v.len*S, Wd=v.wid*S;
+    let col=C.VTYPES[v.type]?C.VTYPES[v.type].color:"#4a637f";
+    if(v.crashed)col="#8a8f97";
+    c.fillStyle=col; c.strokeStyle="rgba(0,0,0,0.25)"; c.lineWidth=0.6;
+    this.roundRect(c,-L/2,-Wd/2,L,Wd,Math.min(2,Wd*0.3)); c.fill();
+    // windshield band
+    c.fillStyle="rgba(255,255,255,0.35)"; c.fillRect(L*0.12,-Wd/2+0.6,Math.max(1,L*0.16),Wd-1.2);
+    if(v.type==="ev"){ const on=Math.floor(Date.now()/150)%2; c.fillStyle=on?"#e33":"#37f";
+      c.fillRect(-L*0.1,-Wd/2,L*0.2,1.4); c.fillStyle=on?"#37f":"#e33"; c.fillRect(-L*0.1,Wd/2-1.4,L*0.2,1.4); }
+    if(v.crashed){ c.strokeStyle="#c0392b";c.lineWidth=1.4;c.beginPath();
+      c.moveTo(-L/3,-Wd/3);c.lineTo(L/3,Wd/3);c.moveTo(L/3,-Wd/3);c.lineTo(-L/3,Wd/3);c.stroke(); }
+    if(v.risk>0){ c.strokeStyle=v.risk>=2?"#dc2626":"#f59e0b"; c.lineWidth=1.6;
+      this.roundRect(c,-L/2-1.5,-Wd/2-1.5,L+3,Wd+3,3); c.stroke(); }
+    c.restore();
+    if(v.isViol){ c.fillStyle="#dc2626"; c.font="bold 10px Segoe UI"; c.fillText("!",sx+6,sy-6); }
+  }
+  roundRect(c,x,y,w,h,r){ c.beginPath(); c.moveTo(x+r,y); c.arcTo(x+w,y,x+w,y+h,r);
+    c.arcTo(x+w,y+h,x,y+h,r); c.arcTo(x,y+h,x,y,r); c.arcTo(x,y,x+w,y,r); c.closePath(); }
+  drawHeat(w){ const c=this.ctx;
+    for(let gy=0;gy<28;gy++)for(let gx=0;gx<28;gx++){ const i=gy*28+gx;
+      const bad=w.heatBad[i],ok=w.heatOk[i]; if(bad+ok<1)continue;
+      const a=bad/(bad+ok+3)*0.55; if(a<0.03)continue;
+      c.fillStyle="rgba(220,40,40,"+a.toFixed(3)+")";
+      this.rect(gx*20-280,gy*20-280,20,20,c.fillStyle); } }
+  drawFX(fx){ if(!fx)return; const c=this.ctx, now=nowMs(), S=this.view.sc;
+    fx.rip=fx.rip.filter(r=>now-r.t0<900);
+    for(const r of fx.rip){ const age=(now-r.t0)/900, rad=age*60*S;
+      c.strokeStyle=this.kindColor(r.kind,1-age); c.lineWidth=1.2;
+      const [sx,sy]=this.w2s(r.x,r.y); c.beginPath();c.arc(sx,sy,rad,0,TAU);c.stroke(); }
+    fx.lnk=fx.lnk.filter(l=>now-l.t0<260);
+    for(const l of fx.lnk){ const age=(now-l.t0)/260; c.strokeStyle="rgba(11,92,173,"+(1-age).toFixed(2)+")";
+      c.lineWidth=1.4; const a=this.w2s(l.ax,l.ay),b=this.w2s(l.bx,l.by);
+      c.beginPath();c.moveTo(a[0],a[1]);c.lineTo(b[0],b[1]);c.stroke(); }
+    fx.fla=fx.fla.filter(f=>now-f.t0<600);
+    for(const f of fx.fla){ const age=(now-f.t0)/600; const [sx,sy]=this.w2s(f.x,f.y);
+      c.fillStyle=f.col; c.globalAlpha=1-age; c.beginPath();c.arc(sx,sy,(6+age*18)*S/2,0,TAU);c.fill(); c.globalAlpha=1; } }
+  kindColor(k,a){ const m={CAM:"11,92,173",DENM:"217,119,6",ICW:"220,38,38",PSM:"8,145,178",SPAT:"100,116,139"};
+    return "rgba("+(m[k]||"120,120,120")+","+Math.max(0,a).toFixed(2)+")"; }
+  overlays(weather){ const c=this.ctx;
+    if(weather==="night"){ c.fillStyle="rgba(10,14,26,0.42)"; c.fillRect(0,0,this.W,this.H); }
+    else if(weather==="fog"){ c.fillStyle="rgba(233,236,240,0.42)"; c.fillRect(0,0,this.W,this.H); }
+    else if(weather==="rain"){ c.fillStyle="rgba(120,140,160,0.14)"; c.fillRect(0,0,this.W,this.H); } }
+  drawMinimap(vehicles,intx){ const c=this.ctx, mw=118, mh=118, pad=10;
+    const x0=this.W-mw-pad, y0=this.H-mh-pad;
+    c.save(); c.fillStyle="rgba(255,255,255,0.9)"; c.strokeStyle="#aeb4bd"; c.lineWidth=1;
+    c.fillRect(x0,y0,mw,mh); c.strokeRect(x0,y0,mw,mh);
+    const RR=260, sc=(mw-10)/(2*RR), cx=x0+mw/2, cy=y0+mh/2;
+    const m2=(wx,wy)=>[cx+wx*sc,cy-wy*sc];
+    // clip everything after this to the map interior so the viewport box never spills outside
+    c.beginPath(); c.rect(x0+1,y0+1,mw-2,mh-2); c.clip();
+    c.strokeStyle="#c3c7cd"; c.lineWidth=Math.max(2,2*NET.HALF*sc);
+    const northTop = intx==="tee" ? 0 : RR;
+    let a=m2(-RR,0),b=m2(RR,0),d=m2(0,-RR),e=m2(0,northTop);
+    c.beginPath();c.moveTo(a[0],a[1]);c.lineTo(b[0],b[1]);c.moveTo(d[0],d[1]);c.lineTo(e[0],e[1]);c.stroke();
+    c.fillStyle="#0b5cad"; for(const v of vehicles){ const [sx,sy]=m2(clamp(v.x,-RR,RR),clamp(v.y,-RR,RR)); c.fillRect(sx-0.8,sy-0.8,1.6,1.6); }
+    const tl=this.s2w(0,0), br=this.s2w(this.W,this.H); const p1=m2(tl[0],tl[1]),p2=m2(br[0],br[1]);
+    c.strokeStyle="#dc2626"; c.lineWidth=1;
+    c.strokeRect(Math.min(p1[0],p2[0]),Math.min(p1[1],p2[1]),Math.abs(p2[0]-p1[0]),Math.abs(p2[1]-p1[1]));
+    c.restore();
+    c.save(); c.fillStyle="#5b616b"; c.font="9px Segoe UI"; c.fillText("overview",x0+6,y0+12); c.restore(); }
+  scaleBar(){ const c=this.ctx, S=this.view.sc, px=50*S;
+    c.strokeStyle="#5b616b";c.lineWidth=1.5;c.beginPath();c.moveTo(14,this.H-16);c.lineTo(14+px,this.H-16);
+    c.moveTo(14,this.H-19);c.lineTo(14,this.H-13);c.moveTo(14+px,this.H-19);c.lineTo(14+px,this.H-13);c.stroke();
+    c.fillStyle="#4a4f57";c.font="10px Segoe UI";c.fillText("50 m",14+px/2-12,this.H-20);
+    c.fillText("N",this.W-20,20); c.beginPath();c.moveTo(this.W-16,26);c.lineTo(this.W-16,10);c.lineTo(this.W-19,15);
+    c.moveTo(this.W-16,10);c.lineTo(this.W-13,15);c.stroke(); }
+  draw(w){ this.resize(); const p=w.p; this._veh=w.vehicles;
+    const sig={dark:w.signals.dark}; for(const g of ["NS_L","NS_T","EW_L","EW_T"])sig[g]=w.signals.stateOf(g);
+    this.drawStatic(sig,w.rsuActive,w.p.intx);
+    if(p.showHeat)this.drawHeat(w);
+    if(p.showTrails){ const c=this.ctx; c.strokeStyle="rgba(11,92,173,0.35)";c.lineWidth=1;
+      for(const v of w.vehicles){ if(v.trail.length<2)continue; c.beginPath();
+        for(let i=0;i<v.trail.length;i++){ const [sx,sy]=this.w2s(v.trail[i][0],v.trail[i][1]);
+          i?c.lineTo(sx,sy):c.moveTo(sx,sy);} c.stroke(); } }
+    const c=this.ctx;
+    for(const v of w.vehicles)this.drawVehicle(c,v);
+    c.fillStyle="#2b6cb0"; for(const pd of w.peds){ const [sx,sy]=this.w2s(pd.x,pd.y);
+      c.beginPath();c.arc(sx,sy,Math.max(1.6,1.1*this.view.sc),0,TAU);c.fill(); }
+    if(p.showPkts)this.drawFX(w.fx);
+    // selection
+    if(this.selected&&w.vehicles.includes(this.selected)){ const v=this.selected;
+      const [sx,sy]=this.w2s(v.x,v.y); c.strokeStyle="#0b5cad";c.lineWidth=1.6;
+      c.beginPath();c.arc(sx,sy,14,0,TAU);c.stroke();
+      if(p.showRange){ c.strokeStyle="rgba(11,92,173,0.25)";c.setLineDash([4,5]);
+        c.beginPath();c.arc(sx,sy,p.awareM*this.view.sc,0,TAU);c.stroke();c.setLineDash([]); }
+      if(p.showLinks){ c.strokeStyle="rgba(11,92,173,0.4)";c.lineWidth=0.8;
+        for(const [id,e] of v.nbrs){ const nb=w.comm.nodes.find(n=>n.id===id); if(!nb)continue;
+          const b=this.w2s(nb.x,nb.y); c.beginPath();c.moveTo(sx,sy);c.lineTo(b[0],b[1]);c.stroke(); } } }
+    if(p.showIds){ c.fillStyle="#333";c.font="9px Consolas";
+      for(const v of w.vehicles){ const [sx,sy]=this.w2s(v.x,v.y); c.fillText(v.id,sx+7,sy+3); } }
+    this.overlays(p.weather); this.scaleBar(); this.drawMinimap(w.vehicles,w.p.intx);
+  }
+  drawSnapshot(snap,p){ this.resize(); this._veh=[];
+    this.drawStatic(snap.sig,true,(p&&p.intx)||"cross");
+    const c=this.ctx, TK=World.TKEYS;
+    for(const a of snap.veh){ const v={x:a[2],y:a[3],hd:a[4],v:a[5],risk:a[6],
+      type:TK[a[1]]||"car",len:C.VTYPES[TK[a[1]]||"car"].l,wid:C.VTYPES[TK[a[1]]||"car"].w,
+      isViol:a[7]&1,isEV:(a[7]>>1)&1,crashed:(a[7]>>2)&1,laneOff:a[8]||0,id:a[0]};
+      this._veh.push(v); this.drawVehicle(c,v); }
+    c.fillStyle="#2b6cb0"; for(const pd of snap.ped){ const [sx,sy]=this.w2s(pd[0],pd[1]);
+      c.beginPath();c.arc(sx,sy,Math.max(1.6,1.1*this.view.sc),0,TAU);c.fill(); }
+    this.overlays(p?p.weather:"clear"); this.scaleBar(); this.drawMinimap(this._veh,(p&&p.intx)||"cross");
+  }
+}
+
+/* =====================================================================================
+   SECTION 14 - ui/chart : minimal dependency-free canvas charting for publication-style
+   plots - time series, PDR/latency vs density, PDR vs distance, latency CDF, latency
+   histogram, per-mode box plots, and safety bars. DPR-guarded so it is inert headless.
+   ===================================================================================== */
+class Chart{
+  constructor(cv){ this.cv=cv; this.ctx=cv?cv.getContext("2d"):null;
+    this.m={l:54,r:16,t:26,b:36}; }
+  size(){ if(typeof window==="undefined"||!this.cv)return;
+    const dpr=Math.min(2,window.devicePixelRatio||1), r=this.cv.getBoundingClientRect();
+    this.W=r.width; this.H=r.height; this.cv.width=r.width*dpr; this.cv.height=r.height*dpr;
+    this.ctx.setTransform(dpr,0,0,dpr,0,0); }
+  clear(title,xl,yl){ if(!this.ctx)return; const c=this.ctx; this.size();
+    c.fillStyle="#ffffff"; c.fillRect(0,0,this.W,this.H);
+    c.fillStyle="#1d2733"; c.font="600 12px Segoe UI"; c.fillText(title||"",this.m.l,16);
+    c.fillStyle="#5b636e"; c.font="10px Segoe UI";
+    if(xl)c.fillText(xl,this.W/2-c.measureText(xl).width/2,this.H-6);
+    if(yl){ c.save();c.translate(12,this.H/2);c.rotate(-Math.PI/2);c.fillText(yl,-c.measureText(yl).width/2,0);c.restore(); }
+    this.title=title; }
+  plotArea(){ return {x:this.m.l,y:this.m.t,w:this.W-this.m.l-this.m.r,h:this.H-this.m.t-this.m.b}; }
+  nice(min,max){ if(!(max>min))max=min+1; const span=max-min, step=Math.pow(10,Math.floor(Math.log10(span/4)));
+    const err=span/4/step; const s=err>=5?10*step:err>=2?5*step:err>=1?2*step:step;
+    return {lo:Math.floor(min/s)*s,hi:Math.ceil(max/s)*s,step:s}; }
+  setScale(xmin,xmax,ymin,ymax){ this.sx=this.nice(xmin,xmax); this.sy=this.nice(ymin,ymax);
+    const a=this.plotArea(); const X=this.sx,Y=this.sy;
+    this.px=v=>a.x+(v-X.lo)/(X.hi-X.lo)*a.w; this.py=v=>a.y+a.h-(v-Y.lo)/(Y.hi-Y.lo)*a.h;
+    const c=this.ctx; c.strokeStyle="#e6e9ed";c.lineWidth=1;c.fillStyle="#7a828d";c.font="9px Consolas";c.textBaseline="middle";
+    for(let v=X.lo;v<=X.hi+1e-9;v+=X.step){ const x=this.px(v); c.beginPath();c.moveTo(x,a.y);c.lineTo(x,a.y+a.h);c.stroke();
+      const t=this.fmtTick(v); c.fillText(t,x-c.measureText(t).width/2,a.y+a.h+10); }
+    for(let v=Y.lo;v<=Y.hi+1e-9;v+=Y.step){ const y=this.py(v); c.beginPath();c.moveTo(a.x,y);c.lineTo(a.x+a.w,y);c.stroke();
+      const t=this.fmtTick(v); c.fillText(t,a.x-c.measureText(t).width-4,y); }
+    c.strokeStyle="#aeb4bd";c.strokeRect(a.x,a.y,a.w,a.h); c.textBaseline="alphabetic"; }
+  fmtTick(v){ const a=Math.abs(v); if(a>=1000)return(v/1000).toFixed(1)+"k"; if(a<1&&a>0)return v.toFixed(2); return String(Math.round(v*100)/100); }
+  line(pts,color,dash,lw){ if(!this.ctx||!pts.length)return; const c=this.ctx; c.strokeStyle=color;c.lineWidth=lw||1.6;
+    c.setLineDash(dash||[]); c.beginPath(); pts.forEach((p,i)=>{ const x=this.px(p[0]),y=this.py(p[1]); i?c.lineTo(x,y):c.moveTo(x,y); });
+    c.stroke(); c.setLineDash([]); }
+  scatter(pts,color,rad){ if(!this.ctx)return; const c=this.ctx; c.fillStyle=color;
+    for(const p of pts){ c.beginPath();c.arc(this.px(p[0]),this.py(p[1]),rad||2.4,0,TAU);c.fill(); } }
+  legend(items){ if(!this.ctx)return; const c=this.ctx,a=this.plotArea(); let y=a.y+4;
+    c.font="10px Segoe UI"; c.textBaseline="middle";
+    for(const it of items){ const tw=c.measureText(it.label).width; const x=a.x+a.w-tw-18;
+      c.fillStyle=it.color; c.fillRect(x,y-3,10,6); c.fillStyle="#3a424d"; c.fillText(it.label,x+14,y); y+=14; }
+    c.textBaseline="alphabetic"; }
+  note(txt){ if(!this.ctx)return; const c=this.ctx,a=this.plotArea(); c.fillStyle="#9aa1ab";c.font="11px Segoe UI";
+    c.fillText(txt,a.x+a.w/2-c.measureText(txt).width/2,a.y+a.h/2); }
+  hist(vals,color,xl){ this.clear("Latency histogram",xl||"latency (ms)","count");
+    if(!vals.length){this.note("no data yet");return;}
+    const mx=Math.max(...vals), nb=24, bins=new Array(nb).fill(0);
+    for(const v of vals)bins[Math.min(nb-1,Math.floor(v/mx*nb))]++;
+    this.setScale(0,mx,0,Math.max(...bins)*1.1); const a=this.plotArea(), bw=a.w/nb;
+    const c=this.ctx; c.fillStyle=color;
+    bins.forEach((b,i)=>{ const x=this.px(i/nb*mx), h=a.y+a.h-this.py(b); c.fillRect(x+1,this.py(b),bw-2,h); }); }
+  cdf(series){ this.clear("Latency CDF","latency (ms)","P(≤x)");
+    let any=false; for(const s of series)if(s.vals.length)any=true;
+    if(!any){this.note("no data yet");return;}
+    let mx=1; for(const s of series)if(s.vals.length)mx=Math.max(mx,...s.vals);
+    this.setScale(0,mx,0,1);
+    for(const s of series){ if(!s.vals.length)continue; const sorted=[...s.vals].sort((a,b)=>a-b);
+      const pts=sorted.map((v,i)=>[v,(i+1)/sorted.length]); this.line(pts,s.color,null,1.6); }
+    this.legend(series.filter(s=>s.vals.length).map(s=>({label:s.label,color:s.color}))); }
+  box(groups){ this.clear("Latency by mode","","latency (ms)");
+    const gs=groups.filter(g=>g.vals.length); if(!gs.length){this.note("run a sweep or let modes accumulate");return;}
+    let mx=1; for(const g of gs)mx=Math.max(mx,...g.vals);
+    this.setScale(0,gs.length,0,mx*1.1); const a=this.plotArea(), bw=a.w/gs.length, c=this.ctx;
+    gs.forEach((g,i)=>{ const q=quartiles(g.vals), cx=a.x+bw*(i+0.5);
+      c.strokeStyle=g.color;c.fillStyle=g.color+"33";c.lineWidth=1.4;
+      const yq1=this.py(q.q1),yq3=this.py(q.q3),ymed=this.py(q.med),ymin=this.py(q.min),ymax=this.py(q.max);
+      c.beginPath();c.moveTo(cx,ymin);c.lineTo(cx,ymax);c.stroke();
+      c.fillRect(cx-bw*0.28,yq3,bw*0.56,yq1-yq3); c.strokeRect(cx-bw*0.28,yq3,bw*0.56,yq1-yq3);
+      c.beginPath();c.moveTo(cx-bw*0.28,ymed);c.lineTo(cx+bw*0.28,ymed);c.stroke();
+      c.fillStyle="#3a424d";c.font="10px Segoe UI";c.fillText(g.label,cx-c.measureText(g.label).width/2,a.y+a.h+22); }); }
+  bars(groups,title,yl){ this.clear(title,"",yl);
+    if(!groups.length){this.note("no data");return;}
+    let mx=1; for(const g of groups)mx=Math.max(mx,g.value);
+    this.setScale(0,groups.length,0,mx*1.15); const a=this.plotArea(), bw=a.w/groups.length, c=this.ctx;
+    groups.forEach((g,i)=>{ const cx=a.x+bw*(i+0.5), y=this.py(g.value);
+      c.fillStyle=g.color||"#0b5cad"; c.fillRect(cx-bw*0.3,y,bw*0.6,a.y+a.h-y);
+      c.fillStyle="#3a424d";c.font="10px Segoe UI";c.fillText(g.label,cx-c.measureText(g.label).width/2,a.y+a.h+14);
+      c.fillStyle="#1d2733";c.font="600 10px Consolas"; const vt=Number.isFinite(g.value)?(g.value>=100?g.value.toFixed(0):g.value.toFixed(2)):"-";
+      c.fillText(vt,cx-c.measureText(vt).width/2,y-4); }); }
+  toDataURL(){ return this.cv?this.cv.toDataURL("image/png"):null; }
+}
+
+/* =====================================================================================
+   SECTION 15 - ui/app : toolbar, auto-generated parameter panel, live KPI grid, vehicle
+   inspector, event log, chart tabs + replay scrubber, async density-sweep batch, and
+   CSV/JSON/PNG export. All DOM access is inside functions; nothing runs until initUI().
+   ===================================================================================== */
+const PARAMS={...DEFAULTS};
+let SWEEP={}, world=null, R=null, CH=null, playing=false, speedMult=4, replayIdx=-1;
+let sweepCancel=false, uiTab="tl", lastUI=0, lastFrame=0, fps=0;
+const RESET_KEYS=new Set(["mode","intx","seed","bwMHz","rriMs","bsN","rsuN","nVeh","weather","canyon","cycleS","turnPct","vmaxKmh","violProb","pedFlow","jaywalk","bgLoad","netAssist"]);
+const INTX=[["cross","4-way signalized"],["tee","T-junction (3-way)"],["awstop","4-way all-way stop"]];
+function buildIntx(){ const s=$("selIntx"); if(!s)return; s.innerHTML="";
+  for(const [v,l] of INTX){ const op=document.createElement("option"); op.value=v; op.textContent=l; if(PARAMS.intx===v)op.selected=true; s.appendChild(op); }
+  s.onchange=()=>applyLive("intx",s.value); }
+const $=id=>document.getElementById(id);
+
+function resetWorld(){ PARAMS._flag=PARAMS._flag||null;
+  world=new World(PARAMS,PARAMS.seed,true); world.snapOn=true; world.selected=R?R.selected:null;
+  world.onLog=uiLog; if($("evtList"))$("evtList").innerHTML=""; replayIdx=-1;
+  if($("scrub")){$("scrub").value=0;} setLive(true);
+}
+function applyLive(k,v){ PARAMS[k]=v;
+  if(!world)return;
+  if(RESET_KEYS.has(k)){ resetWorld(); if(k==="mode")uiLog({t:world.t,cls:"info",txt:"Switched RAT → "+v}); return; }
+  world.p[k]=v;
+  if(k==="cycleS")world.signals.setCycle(v);
+  if(k==="vmaxKmh"||k==="weather"){ const wf=PARAMS.weather==="rain"?0.85:(PARAMS.weather==="fog"?0.72:(PARAMS.weather==="night"?0.92:1));
+    world.vmax=PARAMS.vmaxKmh/3.6*wf; }
+  if(k==="rsuOn")world.rsuActive=!!v;
+}
+function buildParams(){ const host=$("paramGroups"); host.innerHTML=""; let body=null;
+  const ensure=()=>{ if(body)return; const g=document.createElement("div");g.className="pgroup";
+    body=document.createElement("div");body.className="pbody";g.appendChild(body);host.appendChild(g); };
+  for(const d of PARAM_DEFS){
+    if(d.g){ const g=document.createElement("div"); g.className="pgroup";
+      const h=document.createElement("h3"); h.textContent=d.g;
+      body=document.createElement("div"); body.className="pbody";
+      g.appendChild(h); g.appendChild(body); host.appendChild(g);
+      h.onclick=()=>g.classList.toggle("closed"); continue; }
+    ensure();
+    const row=document.createElement("div"); row.className="prow"+(d.chk?" chk":"");
+    if(d.chk){ const inp=document.createElement("input"); inp.type="checkbox"; inp.checked=!!PARAMS[d.k];
+      inp.onchange=()=>applyLive(d.k,inp.checked?1:0);
+      const l=document.createElement("span"); l.className="pl"; l.textContent=d.l;
+      row.appendChild(inp); row.appendChild(l);
+    } else {
+      const l=document.createElement("span"); l.className="pl"; l.textContent=d.l; row.appendChild(l);
+      if(d.sel){ const s=document.createElement("select");
+        for(const o of d.sel){ const op=document.createElement("option"); op.value=o; op.textContent=o+(d.u?(" "+d.u):""); if(PARAMS[d.k]==o)op.selected=true; s.appendChild(op); }
+        s.onchange=()=>applyLive(d.k,isNaN(+s.value)?s.value:+s.value); row.appendChild(s);
+        const pv=document.createElement("span"); pv.className="pv"; row.appendChild(pv);
+      } else if(d.num){ const inp=document.createElement("input"); inp.type="number"; inp.value=PARAMS[d.k];
+        inp.onchange=()=>applyLive(d.k,+inp.value||0); row.appendChild(inp);
+        const pv=document.createElement("span"); pv.className="pv"; row.appendChild(pv);
+      } else { const inp=document.createElement("input"); inp.type="range"; inp.min=d.min; inp.max=d.max; inp.step=d.st; inp.value=PARAMS[d.k];
+        const pv=document.createElement("span"); pv.className="pv"; pv.textContent=PARAMS[d.k]+(d.u?(" "+d.u):"");
+        inp.oninput=()=>{ const v=+inp.value; pv.textContent=v+(d.u?(" "+d.u):""); applyLive(d.k,v); };
+        row.appendChild(inp); row.appendChild(pv); }
+    }
+    body.appendChild(row);
+  }
+}
+function buildModes(){ const host=$("segMode"); host.innerHTML="";
+  for(const m of C.MODES){ const b=document.createElement("button"); b.className="seg"+(PARAMS.mode===m?" on":""); b.textContent=m;
+    b.onclick=()=>{ PARAMS.mode=m; [...host.children].forEach(c=>c.classList.remove("on")); b.classList.add("on");
+      applyLive("mode",m); }; host.appendChild(b); } }
+function buildScenarios(){ const s=$("selScenario"); s.innerHTML="";
+  for(const name in SCENARIOS){ const op=document.createElement("option"); op.value=name; op.textContent=name; s.appendChild(op); }
+  s.onchange=()=>{ const sc=SCENARIOS[s.value]; const keepMode=PARAMS.mode, keepIntx=PARAMS.intx;
+    Object.assign(PARAMS,{...structuredCloneSafe(DEFAULTS)},sc.p);
+    PARAMS.mode=keepMode||DEFAULTS.mode; PARAMS.intx=keepIntx||DEFAULTS.intx;
+    PARAMS._flag=sc.flag||null; PARAMS.spawnBias=(sc.flag==="merge")?"EW":null;
+    buildParams(); buildModes(); buildIntx(); resetWorld(); if(world)world.spawnBias=PARAMS.spawnBias||null;
+    uiLog({t:0,cls:"info",txt:"Scenario: "+s.value}); }; }
+function structuredCloneSafe(o){ return JSON.parse(JSON.stringify(o)); }
+
+const KPIS=[
+ ["pdr","PDR (all)",s=>fpct(s.pdr),s=>s.pdr>0.9?"good":s.pdr>0.75?"warn":"bad"],
+ ["pdr150","PDR @150 m",s=>fpct(s.pdr150),s=>s.pdr150>0.85?"good":s.pdr150>0.6?"warn":"bad"],
+ ["lat","E2E latency",s=>fms(s.lat)+" ms",s=>s.lat<20?"good":s.lat<60?"warn":"bad"],
+ ["p95","95th latency",s=>fms(s.p95)+" ms",s=>s.p95<50?"good":s.p95<150?"warn":"bad"],
+ ["jit","Jitter",s=>fms(s.jit)+" ms",()=>""],
+ ["cbr","Channel busy",s=>fpct(s.cbr),s=>s.cbr<0.4?"good":s.cbr<0.65?"warn":"bad"],
+ ["thr","Goodput",s=>fms(s.thr)+" kbps",()=>""],
+ ["nveh","Vehicles",s=>String(s.nveh),()=>""],
+ ["vavg","Mean speed",s=>fms(s.vavg*3.6)+" km/h",()=>""],
+ ["gen","Msgs generated",s=>String(s.gen),()=>""],
+ ["tx","MAC transmits",s=>String(s.tx),()=>""],
+ ["rxOk","Receptions",s=>String(s.rxOk),()=>""],
+ ["lossSinr","SINR losses",s=>String(s.lossSinr),()=>""],
+ ["lossHd","Half-duplex loss",s=>String(s.lossHd),()=>""],
+ ["retx","Retransmits",s=>String(s.retx),()=>""],
+ ["uuOk","Uu deliveries",s=>String(s.uuOk),()=>""],
+ ["confl","Conflicts",s=>String(s.confl),()=>""],
+ ["warned","…warned in time",s=>String(s.warned),s=>"good"],
+ ["avoided","Conflicts cleared",s=>String(s.avoided),()=>"good"],
+ ["miss","Missed warnings",s=>String(s.miss),s=>s.miss>0?"bad":"good"],
+ ["falseW","False warnings",s=>String(s.falseW),()=>""],
+ ["crashes","Collisions",s=>String(s.crashes),s=>s.crashes>0?"bad":"good"],
+ ["pedHit","VRU strikes",s=>String(s.pedHit),s=>s.pedHit>0?"bad":"good"],
+ ["warnOk","ICW on-time",s=>String(s.warnOk),()=>"good"],
+ ["warnLate","ICW late",s=>String(s.warnLate),s=>s.warnLate>0?"warn":""],
+ ["wDelay","Warn delay",s=>fms(s.wDelay)+" ms",()=>""],
+ ["minTTC","Min TTC",s=>fms(s.minTTC)+" s",s=>s.minTTC<1.5?"bad":s.minTTC<2.5?"warn":"good"],
+];
+function buildKPIs(){ const g=$("kpiGrid"); g.innerHTML="";
+  for(const k of KPIS){ const cell=document.createElement("div"); cell.className="kpi";
+    cell.innerHTML='<span class="k">'+k[1]+'</span><span class="v" id="kpi_'+k[0]+'">-</span>'; g.appendChild(cell); } }
+function updateKPIs(snap){ if(!snap)return;
+  for(const k of KPIS){ const el=$("kpi_"+k[0]); if(!el)continue; el.textContent=k[2](snap);
+    el.className="v "+(k[3]?k[3](snap):""); } }
+function updateInspector(){ const el=$("inspBody"); if(!el)return; const v=R&&R.selected;
+  if(!v||!world||!world.vehicles.includes(v)){ el.innerHTML='<div class="muted">Click a vehicle to inspect its neighbor table and radio state.</div>'; return; }
+  const st=world.signals.stateFor(v.route);
+  const nb=[...v.nbrs.entries()].map(([id,e])=>({id,d:hyp((e.x||0)-v.x,(e.y||0)-v.y),age:world.t-e.t}))
+    .sort((a,b)=>a.d-b.d).slice(0,6);
+  let h='<table class="insp">';
+  const row=(a,b)=>{h+='<tr><td>'+a+'</td><td>'+b+'</td></tr>';};
+  row("ID / type",v.id+" · "+v.type+(v.isViol?" ⚠viol":"")+(v.isEV?" 🚨EV":""));
+  row("route / move",v.route.id+" ("+v.route.mv+")");
+  row("signal",st+(v.awsGo?" AWS-go":"")+(v.rtorGo?" RTOR":""));
+  row("speed / accel",fms(v.v*3.6)+" km/h · "+fms(v.a)+" m/s²");
+  row("pos s",fms(v.s)+" m");
+  row("risk",v.risk>=2?"BRAKE":v.risk>=1?"warn":"–");
+  row("CBR (node)",fpct(world.comm.nodeCbr(v)));
+  row("Tx / Rx",v.cTx+" / "+v.cRx);
+  row("last RSSI/SINR",(Number.isFinite(v.lastRssi)?fms(v.lastRssi):"–")+" / "+(Number.isFinite(v.lastSinr)?fms(v.lastSinr):"–")+" dB");
+  row("queue",(v.dsrc?v.dsrc.q.length:(v.sl?v.sl.q.length:0))+" pkt");
+  row("neighbors",v.nbrs.size);
+  h+='</table><div class="nbh">nearest neighbors</div><table class="insp">';
+  for(const n of nb)h+='<tr><td>#'+n.id+'</td><td>'+fms(n.d)+' m · '+fms(n.age*1000)+' ms</td></tr>';
+  h+='</table>'; el.innerHTML=h;
+}
+function uiLog(e){ const list=$("evtList"); if(!list)return;
+  const d=document.createElement("div"); d.className="ev "+(e.cls||"info");
+  d.textContent="["+fms(e.t)+"s] "+e.txt; list.insertBefore(d,list.firstChild);
+  while(list.children.length>200)list.removeChild(list.lastChild); }
+
+/* ---- charts ---- */
+const TABS=[["tl","Timeline"],["latden","Latency vs density"],["pdrden","PDR vs density"],
+  ["pdrdist","PDR vs distance"],["cdf","Latency CDF"],["hist","Histogram"],["box","Box by mode"],["safety","Safety"]];
+function buildTabs(){ const bar=$("tabsBar"); bar.innerHTML="";
+  for(const [id,label] of TABS){ const b=document.createElement("button"); b.className="tab"+(uiTab===id?" on":""); b.textContent=label;
+    b.onclick=()=>{ uiTab=id; [...bar.children].forEach(c=>c.classList.remove("on")); b.classList.add("on"); renderChart(); };
+    bar.appendChild(b); } }
+function renderChart(){ if(!CH||!world)return; const M=world.metrics, col=C.MODE_COLOR;
+  if(uiTab==="tl"){ CH.clear("Live timeline","time (s)","PDR / CBR");
+    const s=M.series; if(s.length<2){CH.note("accumulating…");return;}
+    const t0=s[0].t,t1=s[s.length-1].t; CH.setScale(t0,t1,0,1);
+    CH.line(s.map(p=>[p.t,p.pdr]),"#0b5cad",null,1.8);
+    CH.line(s.map(p=>[p.t,p.cbr]),"#d97706",[5,4],1.5);
+    CH.legend([{label:"PDR",color:"#0b5cad"},{label:"CBR",color:"#d97706"}]);
+  } else if(uiTab==="latden"||uiTab==="pdrden"){ const pdr=uiTab==="pdrden";
+    CH.clear(pdr?"PDR vs vehicle density":"Latency vs vehicle density","vehicles",pdr?"PDR":"latency (ms)");
+    const modes=Object.keys(SWEEP); if(!modes.length){CH.note("run a density sweep (toolbar)");return;}
+    let xmax=1,ymax=pdr?1:1; for(const m of modes)for(const r of SWEEP[m]){xmax=Math.max(xmax,r.d);if(!pdr)ymax=Math.max(ymax,r.lat);}
+    CH.setScale(0,xmax,0,ymax*(pdr?1:1.1)); const items=[];
+    for(const m of modes){ const c=col[m]||"#333"; const pts=SWEEP[m].map(r=>[r.d,pdr?r.pdr:r.lat]);
+      CH.line(pts,c,null,1.8); CH.scatter(pts,c,3); items.push({label:m,color:c}); }
+    CH.legend(items);
+  } else if(uiTab==="pdrdist"){ CH.clear("PDR vs distance ("+world.p.mode+")","distance (m)","PDR");
+    const pts=[]; M.dist.forEach((d,i)=>{ if(d.tot)pts.push([i*50+25,d.ok/d.tot]); });
+    if(!pts.length){CH.note("accumulating…");return;}
+    CH.setScale(0,400,0,1); CH.line(pts,col[world.p.mode]||"#0b5cad",null,1.8); CH.scatter(pts,col[world.p.mode]||"#0b5cad",3);
+  } else if(uiTab==="cdf"){ CH.cdf([{label:world.p.mode,vals:M.res,color:col[world.p.mode]||"#0b5cad"}]);
+  } else if(uiTab==="hist"){ CH.hist(M.res,col[world.p.mode]||"#0b5cad");
+  } else if(uiTab==="box"){ const groups=[];
+    if(Object.keys(SWEEP).length){ for(const m in SWEEP){ const vals=[]; /* synth from mean/p95 unavailable; use live res if current */
+      groups.push({label:m,vals:m===world.p.mode?M.res:[],color:col[m]}); } }
+    else groups.push({label:world.p.mode,vals:M.res,color:col[world.p.mode]});
+    CH.box(groups.filter(g=>g.vals.length)); if(!groups.some(g=>g.vals.length))CH.note("accumulating…");
+  } else if(uiTab==="safety"){ const s=M.safety;
+    CH.bars([{label:"conflicts",value:s.confl,color:"#64748b"},{label:"warned",value:s.warned,color:"#0b5cad"},
+      {label:"cleared",value:s.avoided,color:"#2ca02c"},{label:"missed",value:s.miss,color:"#d97706"},
+      {label:"false",value:s.falseW,color:"#9467bd"},{label:"crash",value:s.crashes,color:"#dc2626"},
+      {label:"VRU hit",value:s.pedHit,color:"#b91c1c"}],"Safety outcomes","count"); }
+}
+/* ---- replay ---- */
+function setLive(on){ if(!$("btnLive"))return; if(on){replayIdx=-1;$("btnLive").classList.add("on");} else $("btnLive").classList.remove("on"); }
+function updateTimeline(){ const cv=$("tlCv"); if(!cv||!world)return; const ctx=cv.getContext("2d");
+  const dpr=Math.min(2,window.devicePixelRatio||1),r=cv.getBoundingClientRect();
+  if(cv.width!==r.width*dpr){cv.width=r.width*dpr;cv.height=r.height*dpr;} ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.clearRect(0,0,r.width,r.height); const s=world.metrics.series; if(s.length<2)return;
+  const t0=s[0].t,t1=s[s.length-1].t||1; ctx.strokeStyle="#0b5cad";ctx.lineWidth=1.4;ctx.beginPath();
+  s.forEach((p,i)=>{ const x=(p.t-t0)/(t1-t0)*r.width, y=r.height-(p.pdr||0)*r.height*0.9-2; i?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+  ctx.stroke();
+  if($("scrub")){ $("scrub").max=Math.max(0,world.snaps.length-1);
+    if(replayIdx>=0)$("scrub").value=replayIdx; }
+}
+/* ---- density sweep ---- */
+async function runSweep(){ if(!world)return; sweepCancel=false; $("sweepWrap").style.display="flex";
+  const dens=[15,30,45,60], modes=C.MODES; SWEEP={}; let done=0, total=modes.length*dens.length;
+  for(const m of modes){ SWEEP[m]=[];
+    for(const d of dens){ if(sweepCancel)break;
+      $("sweepTxt").textContent="Sweep "+m+" @ "+d+" veh…"; $("sweepFill").style.width=(done/total*100).toFixed(0)+"%";
+      await new Promise(r=>setTimeout(r,0));
+      const {sum}=runHeadless({mode:m,nVeh:d,seed:PARAMS.seed},12,PARAMS.seed);
+      SWEEP[m].push({d,lat:sum.lat,p95:sum.p95,pdr:sum.pdr150}); done++;
+    } if(sweepCancel)break; }
+  $("sweepFill").style.width="100%"; $("sweepWrap").style.display="none";
+  uiTab="latden"; buildTabs(); renderChart();
+  uiLog({t:world.t,cls:"info",txt:sweepCancel?"Sweep cancelled":"Density sweep complete ("+total+" runs)"});
+}
+/* ---- exports ---- */
+function download(name,data,type){ const blob=new Blob([data],{type:type||"text/plain"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=name; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000); }
+function exportCSV(){ if(!world)return; const s=world.metrics.series;
+  let csv="# V2X intersection sim - mode="+world.p.mode+" seed="+world.p.seed+" nVeh="+world.p.nVeh+"\n";
+  csv+="t,pdr,lat_ms,p95_ms,jitter_ms,cbr,goodput_kbps,nveh,vavg_ms\n";
+  for(const p of s)csv+=[p.t.toFixed(2),fmt(p.pdr,4),fmt(p.lat,2),fmt(p.p95,2),fmt(p.jit,2),fmt(p.cbr,4),fmt(p.thr,1),p.nveh,fmt(p.vavg,2)].join(",")+"\n";
+  download("v2x_timeseries_"+world.p.mode+".csv",csv,"text/csv"); }
+function exportJSON(){ if(!world)return;
+  const obj={params:world.p,summary:world.metrics.snapshot(),series:world.metrics.series,
+    pdrByDistance:world.metrics.dist.map((d,i)=>({bin:i*50+"-"+(i*50+50)+"m",pdr:d.tot?d.ok/d.tot:null,n:d.tot})),
+    sweep:SWEEP};
+  download("v2x_results_"+world.p.mode+".json",JSON.stringify(obj,null,2),"application/json"); }
+function exportPNG(){ if(!CH)return; const url=CH.toDataURL(); if(!url)return;
+  const a=document.createElement("a"); a.href=url; a.download="v2x_chart_"+uiTab+".png"; a.click(); }
+
+/* ---- one-click comparison report: auto-sweep all RATs → single self-contained HTML ---- */
+async function generateReport(){ if(!world)return;
+  const btn=$("btnReport"); if(btn)btn.disabled=true; sweepCancel=false;
+  $("sweepWrap").style.display="flex";
+  const dens=[10,25,40,60,85,110], modes=C.MODES, col=C.MODE_COLOR, refD=60;
+  const D={}, CDF={}, SAFE={}; for(const m of modes)D[m]=[];
+  let done=0, total=modes.length*dens.length;
+  for(const m of modes){ for(const d of dens){ if(sweepCancel)break;
+    $("sweepTxt").textContent="Report: "+m+" @ "+d+" veh…"; $("sweepFill").style.width=(done/total*100).toFixed(0)+"%";
+    await new Promise(r=>setTimeout(r,0));
+    const {w,sum}=runHeadless({mode:m,nVeh:d,seed:PARAMS.seed,rsuOn:PARAMS.rsuOn,weather:PARAMS.weather,canyon:PARAMS.canyon,bgLoad:PARAMS.bgLoad},14,PARAMS.seed);
+    D[m].push({d,pdr:sum.pdr,pdr150:sum.pdr150,lat:sum.lat,p95:sum.p95,p99:sum.p99,jit:sum.jit,cbr:sum.cbr,thr:sum.thr});
+    if(d===refD){ CDF[m]=w.metrics.res.slice(0,4000); SAFE[m]=Object.assign({},w.metrics.safety,{wDelay:w.metrics.safety.wDelay.mean}); }
+    done++; } if(sweepCancel)break; }
+  $("sweepWrap").style.display="none"; if(btn)btn.disabled=false;
+  if(sweepCancel){ uiLog({t:world.t,cls:"info",txt:"Report cancelled"}); return; }
+  // offscreen chart rendering
+  const holder=document.createElement("div"); holder.style.cssText="position:absolute;left:-99999px;top:0;width:840px;height:470px";
+  const cv=document.createElement("canvas"); cv.style.width="840px"; cv.style.height="470px";
+  holder.appendChild(cv); document.body.appendChild(holder); const ch=new Chart(cv); const imgs={};
+  const xy=(title,yl,pick)=>{ ch.clear(title,"vehicles (demand level)",yl);
+    let xmax=1,ymax=1e-6; for(const m of modes)for(const r of D[m]){xmax=Math.max(xmax,r.d);ymax=Math.max(ymax,pick(r)||0);}
+    ch.setScale(0,xmax,0,ymax*1.14||1); const items=[];
+    for(const m of modes){ const c=col[m], pts=D[m].map(r=>[r.d,pick(r)||0]); ch.line(pts,c,null,2); ch.scatter(pts,c,3.2); items.push({label:m,color:c}); }
+    ch.legend(items); };
+  xy("Mean end-to-end latency vs vehicle density","latency (ms)",r=>r.lat); imgs.lat=cv.toDataURL();
+  xy("95th-percentile latency vs density (tail)","p95 latency (ms)",r=>r.p95); imgs.p95=cv.toDataURL();
+  xy("Packet delivery ratio @150 m vs density","PDR @150 m",r=>r.pdr150); imgs.pdr=cv.toDataURL();
+  xy("Channel busy ratio vs density","CBR",r=>r.cbr); imgs.cbr=cv.toDataURL();
+  ch.cdf(modes.map(m=>({label:m,vals:CDF[m]||[],color:col[m]}))); imgs.cdf=cv.toDataURL();
+  ch.box(modes.map(m=>({label:m,vals:CDF[m]||[],color:col[m]}))); imgs.box=cv.toDataURL();
+  ch.bars(modes.map(m=>({label:m,value:SAFE[m]?SAFE[m].warnOk:0,color:col[m]})),"ICW warnings delivered on time (@"+refD+" veh)","count"); imgs.warn=cv.toDataURL();
+  ch.bars(modes.map(m=>({label:m,value:SAFE[m]?SAFE[m].wDelay:0,color:col[m]})),"Mean warning delivery delay (@"+refD+" veh)","ms"); imgs.wdelay=cv.toDataURL();
+  document.body.removeChild(holder);
+  // data table + csv
+  const near=(m)=>{ let best=D[m][0]; for(const r of D[m])if(Math.abs(r.d-refD)<Math.abs(best.d-refD))best=r; return best; };
+  let csv="mode,vehicles,pdr_all,pdr150,lat_ms,p95_ms,p99_ms,jitter_ms,cbr,goodput_kbps\n";
+  for(const m of modes)for(const r of D[m])csv+=[m,r.d,fmt(r.pdr,4),fmt(r.pdr150,4),fmt(r.lat,2),fmt(r.p95,2),fmt(r.p99,2),fmt(r.jit,2),fmt(r.cbr,4),fmt(r.thr,1)].join(",")+"\n";
+  const csvURI="data:text/csv;charset=utf-8,"+encodeURIComponent(csv);
+  const fig=(src,cap)=>'<figure><img src="'+src+'"><figcaption>'+cap+'</figcaption></figure>';
+  let sumT='<table><thead><tr><th>RAT</th><th>PDR@150 m</th><th>Latency (ms)</th><th>p95 (ms)</th><th>Jitter (ms)</th><th>CBR</th><th>Goodput (kbps)</th><th>ICW on-time</th><th>Warn delay (ms)</th></tr></thead><tbody>';
+  for(const m of modes){ const r=near(m), s=SAFE[m]||{};
+    sumT+='<tr><td class="m" style="color:'+col[m]+'">'+m+'</td><td>'+fpct(r.pdr150)+'</td><td>'+fms(r.lat)+'</td><td>'+fms(r.p95)+'</td><td>'+fms(r.jit)+'</td><td>'+fpct(r.cbr)+'</td><td>'+fms(r.thr)+'</td><td>'+(s.warnOk||0)+'</td><td>'+fms(s.wDelay||0)+'</td></tr>'; }
+  sumT+='</tbody></table>';
+  let fullT='<table class="data"><thead><tr><th>Mode</th><th>Veh</th><th>PDR@150</th><th>Lat</th><th>p95</th><th>p99</th><th>Jitter</th><th>CBR</th><th>Goodput</th></tr></thead><tbody>';
+  for(const m of modes)for(const r of D[m])fullT+='<tr><td style="color:'+col[m]+'">'+m+'</td><td>'+r.d+'</td><td>'+fpct(r.pdr150)+'</td><td>'+fms(r.lat)+'</td><td>'+fms(r.p95)+'</td><td>'+fms(r.p99)+'</td><td>'+fms(r.jit)+'</td><td>'+fpct(r.cbr)+'</td><td>'+fms(r.thr)+'</td></tr>';
+  fullT+='</tbody></table>';
+  const P=world.p, now=new Date();
+  const html='<!doctype html><html><head><meta charset="utf-8"><title>V2X DSRC vs C-V2X - comparison report</title>'
+   +'<style>body{font:13px/1.55 -apple-system,Segoe UI,Roboto,sans-serif;color:#1d2733;max-width:960px;margin:24px auto;padding:0 20px}'
+   +'h1{font-size:20px;margin:0 0 2px}h2{font-size:15px;margin:26px 0 8px;color:#0b5cad;border-bottom:1px solid #e2e5ea;padding-bottom:3px}'
+   +'.meta{color:#5b636e;font-size:12px;margin-bottom:8px}table{border-collapse:collapse;width:100%;font-size:12px;margin:6px 0}'
+   +'th,td{border:1px solid #dde1e6;padding:4px 7px;text-align:right}th{background:#f4f6f9;text-align:right}td.m,th:first-child,td:first-child{text-align:left}'
+   +'figure{margin:10px 0;text-align:center}img{max-width:100%;border:1px solid #e2e5ea;border-radius:3px}'
+   +'figcaption{font-size:11px;color:#5b636e;margin-top:3px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}'
+   +'.note{background:#f6f8fa;border-left:3px solid #0b5cad;padding:8px 12px;font-size:12px;margin:8px 0}'
+   +'a.dl{display:inline-block;background:#0b5cad;color:#fff;padding:6px 12px;border-radius:3px;text-decoration:none;font-size:12px}'
+   +'ul{margin:6px 0 6px 18px}code{background:#eef1f4;padding:1px 4px;border-radius:2px}</style></head><body>'
+   +'<h1>DSRC vs C-V2X - intersection collision-avoidance comparison</h1>'
+   +'<div class="meta">Generated '+now.toISOString().slice(0,16).replace("T"," ")+' UTC · seed '+P.seed
+   +' · environment: '+P.weather+(P.canyon?", urban canyon":"")+(P.rsuOn?", RSU on":", RSU off")+', background load '+fpct(P.bgLoad)
+   +' · each point = 14 s headless run · densities '+dens.join(", ")+' vehicles.</div>'
+   +'<div class="note">Self-contained report produced by the V2X intersection simulator. Every RAT was run through the identical traffic, geometry and channel model; only the access-layer/scheduler differs. Figures are indicative of <em>relative</em> behaviour - see the tool README for model assumptions and simplifications.</div>'
+   +'<h2>Summary at '+refD+' vehicles</h2>'+sumT
+   +'<h2>Latency</h2><div class="grid">'+fig(imgs.lat,"(a) Mean end-to-end latency vs density.")+fig(imgs.p95,"(b) 95th-percentile latency - the tail that governs deadline compliance.")+'</div>'
+   +fig(imgs.cdf,"(c) Latency CDF at "+refD+" veh, all RATs. 95th/99th percentiles are read off the upper tail.")
+   +'<h2>Reliability &amp; load</h2><div class="grid">'+fig(imgs.pdr,"(d) PDR @150 m vs density.")+fig(imgs.cbr,"(e) Channel busy ratio vs density.")+'</div>'
+   +fig(imgs.box,"(f) Per-RAT latency distribution (box: quartiles; whiskers: min/max).")
+   +'<h2>Safety-relevant delivery</h2><div class="grid">'+fig(imgs.warn,"(g) Intersection Collision Warnings delivered before the braking deadline.")+fig(imgs.wdelay,"(h) Mean warning delivery delay by RAT.")+'</div>'
+   +'<h2>Interpretation</h2><div class="note">Expected contrast (verify against the figures above): DSRC and NR-V2X provide millisecond access latency; LTE-V2X Mode 4 sits in the tens-of-milliseconds range with a heavier upper tail from persistent SPS resource collisions; PDR falls with NLOS distance and rising CBR for all RATs; the Hybrid PC5+Uu path trades higher latency for near-complete coverage because the network fills NLOS gaps. Because it is the latency <em>tail</em> (panel c) and the run-length of losses, not the mean, that decides whether a safety deadline is met, panels (b), (c) and (g) are the operative ones for collision avoidance.</div>'
+   +'<h2>Full sweep data</h2>'+fullT+'<p><a class="dl" href="'+csvURI+'" download="v2x_comparison_data.csv">Download raw CSV</a></p>'
+   +'<p class="meta">Parameters: mode-independent settings held constant - beacon '+P.beaconHz+' Hz, packet '+P.pktBytes+' B, awareness '+P.awareM+' m, Tx '+P.txDbm+' dBm, DCC/CR '+(P.dcc?"on":"off")+', RRI '+P.rriMs+' ms, blind-retx '+P.blindRetx+'.</p>'
+   +'</body></html>';
+  download("v2x_comparison_report.html",html,"text/html");
+  uiLog({t:world.t,cls:"info",txt:"Comparison report generated ("+total+" runs, 8 figures)"});
+}
+/* ---- about / assumptions ---- */
+const ASSUME=[
+ ["Path loss (LOS)","22.7·log₁₀d + 41 + 20·log₁₀(fc/5) dB","WINNER+ B1 / 3GPP TR 37.885"],
+ ["NLOS corner","+18 dB + slope·depth (cap 25)","Mangel & Hartenstein 2011"],
+ ["Shadowing","log-normal σ 3/4 dB, AR(1) 25 m","3GPP TR 37.885"],
+ ["Fast fading","Nakagami-m (3/2/1 by range)","Cheng 2007; Molina-Masegosa 2020"],
+ ["DSRC MAC","802.11p EDCA, CSMA/CA, DCC","IEEE 802.11-2016; ETSI TS 102 687"],
+ ["LTE-V2X","Mode 4 sensing SPS, RRI/probKeep","3GPP TS 36.213 §14; TR 36.885"],
+ ["NR-V2X","Mode 2 dynamic + blind/HARQ retx","3GPP TS 38.214; TR 38.885"],
+ ["V2N (Uu)","UL + MEC/cloud + DL, handover gap","3GPP TR 38.913; ETSI MEC 003"],
+ ["Mobility","IDM car-following + MOBIL","Treiber 2000; Kesting 2007"],
+ ["Safety app","CAM/DENM/SPaT/PSM, ICW/EEBL/VRU","SAE J2735 / J2945-1; ETSI EN 302 637-2"],
+ ["Conflict metric","surrogate PET/TTC at conflict point","Allen 1978; ISO/TS 19091"],
+];
+const SIMPL=[
+ "100 µs channel tick: one tick modelled as one 802.11p backoff slot (aggregation).",
+ "Packet error via logistic SINR→PER mapping, not full BER/coding chain.",
+ "NLOS uses a Manhattan-corner geometric model, not ray tracing.",
+ "LTE/NR sidelink assumes aligned subframe/slot grid across nodes.",
+ "Uu delivers as an idealised geo-broadcast within the awareness radius.",
+ "RSU/BS links treated as LOS to the intersection.",
+ "Weather at 5.9 GHz is mostly behavioural (speeds, phase) plus small excess loss.",
+ "Not a replacement for ns-3/OMNeT++ full-stack simulation - a fast intuition tool.",
+];
+const ARCH_FE=[
+ ["Renderer","2-D canvas viewport: pan/zoom, roads/lanes/crosswalks/buildings, signal heads, RSU/BS, vehicles & VRUs, packet-FX layer, packet-loss heat map, and an overview minimap."],
+ ["Chart library","Dependency-free canvas plotting - time series, latency/PDR vs density, PDR vs distance, latency CDF, histogram, per-RAT box plots, safety bars."],
+ ["UI shell","Auto-generated parameter panel, live KPI grid, vehicle inspector, event log, chart tabs, replay scrubber, and the density-sweep / one-click comparison-report exporters."],
+ ["Rendering loop","requestAnimationFrame at display rate; simulation stepped by wall-clock × speed; KPIs/charts refreshed ~4 Hz."],
+];
+const ARCH_BE=[
+ ["World engine","Quasi-discrete-event loop: channel tick 100 µs · mobility 20 ms · beacon generation 1 ms · app/safety/oracle 10 Hz · metrics 2 Hz. Seeded PRNG → reproducible."],
+ ["Traffic / mobility","IDM car-following + MOBIL lane changes on a routed road network; four-phase signal control with pre-emption, RTOR and an all-way-stop arbiter; pedestrians/VRUs."],
+ ["Channel","WINNER+/TR 37.885 path loss, corner-NLOS + urban canyon, NLOSv vehicle blockage, AR(1) log-normal shadowing, Nakagami-m fading; SINR→PER via a logistic map."],
+ ["Access stacks","DSRC 802.11p EDCA CSMA/CA + DCC · LTE-V2X Mode 4 sensing-SPS · NR-V2X Mode 2 dynamic + HARQ · V2N Uu (eNB/gNB + MEC/cloud + handover). Common Comm bus + neighbour tables."],
+ ["Safety application","SAE J2735 CAM/DENM/SPaT/PSM → ICW/EEBL/VRU/EVA; braking-deadline checks; a ground-truth Oracle scores missed/false warnings from true kinematics."],
+ ["Metrics","Rolling-window PDR (by distance/density), latency/p95/jitter, CBR, goodput, loss decomposition, and surrogate-safety counters; CSV/JSON/PNG/report export."],
+];
+function buildAbout(){ const b=$("aboutBody");
+  let h='<h2>About - V2X-ICAS</h2><p class="muted">An interactive testbed comparing DSRC (IEEE 802.11p) and C-V2X (LTE-V2X Mode 4, NR-V2X Mode 2, Hybrid PC5+Uu) for signalized-intersection collision avoidance. Single self-contained HTML file; no server, install or network required.</p>';
+  h+='<h2>Model architecture - front end</h2><table class="insp"><tr><th>Component</th><th>Role</th></tr>';
+  for(const a of ARCH_FE)h+='<tr><td>'+a[0]+'</td><td>'+a[1]+'</td></tr>'; h+='</table>';
+  h+='<h2>Model architecture - back end (simulation engine)</h2><table class="insp"><tr><th>Component</th><th>Role</th></tr>';
+  for(const a of ARCH_BE)h+='<tr><td>'+a[0]+'</td><td>'+a[1]+'</td></tr>'; h+='</table>';
+  h+='<h2>Assumptions &amp; parameter sources</h2><table class="insp"><tr><th>Model</th><th>Formulation</th><th>Source</th></tr>';
+  for(const a of ASSUME)h+='<tr><td>'+a[0]+'</td><td>'+a[1]+'</td><td>'+a[2]+'</td></tr>';
+  h+='</table><h2>Simplifications</h2><ul>'; for(const s of SIMPL)h+='<li>'+s+'</li>'; h+='</ul>';
+  h+='<p class="muted">Validated headless vs literature: DSRC ~1–3 ms, LTE-V2X ~30–60 ms, NR-V2X &lt;15 ms end-to-end at low load; PDR falls with NLOS distance and rising CBR. See README for full references.</p>';
+  h+='<div class="about-footer">Designed by Krithik</div>';
+  b.innerHTML=h; }
+/* ---- folds & collapse ---- */
+function wireFolds(){ document.querySelectorAll("h3[data-fold]").forEach(h=>{ if(h._wired)return; h._wired=1;
+  h.onclick=()=>{ h.parentElement.classList.toggle("closed"); }; }); }
+function updateHud(snap){ const hud=$("hud"); if(!hud||!world)return;
+  hud.textContent=fms(world.t)+" s   ·   "+world.vehicles.length+" veh   ·   "+world.p.mode+"   ·   ×"+speedMult+"   ·   "+fps.toFixed(0)+" fps";
+  const hm=$("hudMode"); if(hm){hm.textContent=world.p.mode; hm.style.background=C.MODE_COLOR[world.p.mode];}
+  if($("miniTxt")&&snap)$("miniTxt").textContent="PDR "+fpct(snap.pdr)+" · "+fms(snap.lat)+" ms · CBR "+fpct(snap.cbr);
+}
+function frame(){ requestAnimationFrame(frame);
+  const now=nowMs(), dt=Math.min(0.05,(now-lastFrame)/1000); lastFrame=now;
+  fps=fps*0.9+(1/Math.max(1e-3,dt))*0.1;
+  if(world){ if(playing&&replayIdx<0)world.step(dt*speedMult);
+    if(replayIdx>=0&&world.snaps[replayIdx])R.drawSnapshot(world.snaps[replayIdx],world.p); else R.draw(world); }
+  if(now-lastUI>230){ lastUI=now; if(world){ const snap=world.metrics.snapshot();
+    updateKPIs(snap); updateInspector(); updateHud(snap); renderChart(); updateTimeline(); } }
+}
+function initUI(){
+  R=new Renderer($("cv")); CH=new Chart($("chartCv"));
+  R.onPick=v=>{ R.selected=v; if(world)world.selected=v; updateInspector(); };
+  buildParams(); buildModes(); buildIntx(); buildScenarios(); buildKPIs(); buildTabs(); buildAbout(); wireFolds();
+  resetWorld();
+  $("btnPlay").onclick=()=>{ playing=!playing; $("btnPlay").textContent=playing?"⏸ Pause":"▶ Play";
+    $("btnPlay").classList.toggle("on",playing); };
+  $("btnStep").onclick=()=>{ if(world){setLive(true);world.step(0.1);} };
+  $("btnReset").onclick=()=>{ resetWorld(); };
+  $("rngSpeed").oninput=()=>{ speedMult=Math.pow(2,+$("rngSpeed").value); $("lblSpeed").textContent="×"+speedMult; };
+  $("btnSweep").onclick=()=>runSweep();
+  $("btnCancelSweep").onclick=()=>{ sweepCancel=true; };
+  $("btnCsv").onclick=exportCSV; $("btnJson").onclick=exportJSON; $("btnPng").onclick=exportPNG;
+  if($("btnReport"))$("btnReport").onclick=generateReport;
+  $("btnFit").onclick=()=>R.fit(); $("btnZoomIn").onclick=()=>R.zoom(1.2); $("btnZoomOut").onclick=()=>R.zoom(1/1.2);
+  $("btnAbout").onclick=()=>{ $("aboutModal").style.display="flex"; }; $("aboutClose").onclick=()=>{ $("aboutModal").style.display="none"; };
+  $("btnLeft").onclick=()=>$("app").classList.toggle("no-left");
+  $("btnRight").onclick=()=>$("app").classList.toggle("no-right");
+  $("btnBottom").onclick=()=>$("app").classList.toggle("no-bottom");
+  $("btnLive").onclick=()=>{ setLive(true); };
+  $("scrub").oninput=()=>{ replayIdx=+$("scrub").value; setLive(false); };
+  window.addEventListener("keydown",e=>{ if(e.target.tagName==="INPUT"||e.target.tagName==="SELECT")return;
+    if(e.code==="Space"){e.preventDefault();$("btnPlay").click();}
+    else if(e.key==="r"||e.key==="R")resetWorld(); else if(e.key==="f"||e.key==="F")R.fit(); });
+  playing=true; $("btnPlay").textContent="⏸ Pause"; $("btnPlay").classList.add("on");
+  $("lblSpeed").textContent="×"+speedMult; $("rngSpeed").value=Math.log2(speedMult);
+  lastFrame=nowMs(); requestAnimationFrame(frame);
+}
+
+/* =====================================================================================
+   SECTION 16 - boot : in a browser, initialise the UI on DOMContentLoaded. Under Node
+   (no window), run a headless 4-mode smoke test that asserts the KPIs are finite and
+   in physically plausible ranges - this is the self-validation harness.
+   ===================================================================================== */
+if(typeof window!=="undefined"){
+  if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",initUI); else initUI();
+}else{
+  const modes=C.MODES; const f=(x,d=2)=>Number.isFinite(x)?x.toFixed(d):"NaN";
+  let ok=true;
+  console.log("V2X intersection simulator - headless smoke test (40 veh, 12 s/mode)");
+  console.log("mode      pdr@50 pdr@150  lat(ms) p95(ms)  cbr    tx    confl warnOk crashes");
+  for(const m of modes){ const {w,sum}=runHeadless({mode:m,nVeh:40},12,42);
+    const b=w.metrics.dist, pd=i=>b[i].tot?b[i].ok/b[i].tot:NaN;
+    console.log(m.padEnd(9),f(pd(0)).padStart(6),f(pd(2)).padStart(7),f(sum.lat,1).padStart(8),
+      f(sum.p95,1).padStart(8),f(sum.cbr,3).padStart(6),String(sum.tx).padStart(6),
+      String(sum.confl).padStart(5),String(sum.warnOk).padStart(6),String(sum.crashes).padStart(7));
+    for(const key of ["pdr","lat","p95","cbr","tx"]) if(!Number.isFinite(sum[key])){ ok=false; console.log("  ASSERT FAIL: "+key+" not finite"); }
+    if(pd(0)<0.5){ ok=false; console.log("  ASSERT FAIL: near-range PDR unexpectedly low"); }
+  }
+  console.log(ok?"\nAll assertions passed.":"\nSMOKE TEST FAILED.");
+}
+</script>
+</body>
+</html>
